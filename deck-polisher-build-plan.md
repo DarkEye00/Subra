@@ -309,3 +309,46 @@ FILE_RETENTION_DAYS=7
 **Fixed monthly costs (outside the AI bill):** droplet ~$24, Spaces ~$5, domain. That's about KES 4,000 a month. **Break-even is roughly 15–20 decks a month.**
 
 These are estimates. Replace them with real numbers from the `AIJob` table after the first 20 test decks.
+
+---
+
+## Amendment 1 (overrides sections 4, 6, 8, 9 where they conflict)
+
+### A. Payments: IntaSend replaces Daraja for launch
+- Use **IntaSend** (M-Pesa STK Push via IntaSend's API and callbacks/webhooks). No own paybill or Daraja go-live is needed.
+- Keep payments behind a `PaymentProvider` interface (`initiate(order, phone)`, `handle_callback(payload)`, `check_status(ref)`) with an `IntaSendProvider` implementation. Daraja becomes a future provider class.
+- Same rules as before: idempotent callbacks, store raw payloads, poll status if no callback within 60 seconds, and only a confirmed matching amount marks the order `PAID`.
+- Rename payment fields to be provider-neutral: `provider`, `provider_ref`, `provider_receipt`.
+- IntaSend fees (~4.5% unregistered) are a per-order cost. Log them on `Payment` and include them in the admin margin view.
+- Env: remove `MPESA_*`, add `PAYMENT_PROVIDER=intasend`, `INTASEND_PUBLISHABLE_KEY`, `INTASEND_SECRET_KEY`, `INTASEND_WEBHOOK_SECRET`, `INTASEND_ENV=sandbox`.
+
+### B. Rendering: transform in place, don't rebuild from a template
+- The renderer works on a **copy of the uploaded file** and modifies it in place. It no longer builds a new deck from a theme template file.
+- Themes are applied by rewriting the file's theme color and font scheme, and setting slide backgrounds. A `Theme` stores a color scheme, font pair, and background specs, not a .pptx template.
+- Normal slides: remove the original text, table, and chart shapes, and add redesigned ones per the layout plan.
+- Embedded parts (media, workbooks, models, images) never leave the package, so no cross-file part copying is needed.
+
+### C. Locked objects
+Treat these as **locked**: video, audio, OLE objects (embedded or linked Excel and others), equations (OMML), 3D models, SmartArt, ink, and grouped shapes containing any of these.
+- **Extract step:** detect every locked object by inspecting the slide XML directly (python-pptx won't surface all of them, and equations are skipped by text extraction). Record type, slide, shape ID, position, and a SHA-256 hash of each related part.
+- **Plan step:** locked objects are passed to Claude as opaque items with ID, type, and size. Claude may only assign them to a layout slot. It cannot remove, split, or resize them beyond the aspect ratio.
+- **Render step:** keep the locked shape element untouched (same shape ID, so animations and timing still work). Only its position and size may change, aspect ratio preserved. Redesign the rest of the slide around it.
+- **Verify step:** every locked object must exist in the output with identical part hashes. Equations count as content: the number of equations per slide must match. Any mismatch fails verification.
+- **Linked objects:** keep the link and flag it in the quote ("this deck links to external files that may not open on other computers").
+- **Quote screen:** list the locked objects found, for example "4 slides contain video or embedded objects. These are kept exactly as they are, and the slides are restyled around them."
+- **Previews:** LibreOffice may render equations imperfectly and shows 3D models as their fallback image. Note this on the preview page. It doesn't affect the downloaded file.
+
+### D. Limits
+- Upload limit: 25 MB normally, **100 MB if the deck contains video or audio**.
+- Test set must include at least one deck with each locked object type before launch.
+
+### E. Images (extends sections 6 and Amendment 1)
+- **Master and layout images** (logos, decorative graphics on slide masters and layouts): preserve them by default. The theme swap must never remove images from masters or layouts. Record them in the extract step and verify they still exist after rendering.
+- **Slide background images:** detect picture backgrounds (`p:bg` with a blip fill). Keep them unless the chosen theme explicitly replaces backgrounds. If replaced, keep the original image on that slide as a regular picture only if it carries content (the planner decides), and log the change.
+- **Cropping:** preserve crop settings (`a:srcRect`) exactly. Never reset to the full image.
+- **SVG:** keep the SVG part and its PNG fallback together.
+- **Alt text:** preserve each picture's description (`descr`) and title. If a shape is recreated, copy them across.
+- **Effects:** keep original image effects (recolor, transparency, borders) unless the theme defines a picture style. Never apply filters that alter the image content itself.
+- **Images of text:** pass images to the planner as opaque items with size and aspect ratio. The planner may only place and scale them. No OCR in the MVP.
+- **Verify step:** every image part (slide, layout, master, background) is present with an identical SHA-256 hash, and crop and alt text are unchanged.
+- **Test set:** include a deck with a logo on the master, a cropped photo, a picture background, and SVG icons.
