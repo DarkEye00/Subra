@@ -3,10 +3,10 @@ FROM node:22-alpine AS css
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY static/src static/src
+COPY frontend frontend
 COPY templates templates
 COPY orders orders
-RUN npx tailwindcss -i static/src/app.css -o static/css/app.css --minify
+RUN npx tailwindcss -i frontend/app.css -o static/css/app.css --minify
 
 # --- app -------------------------------------------------------------------
 FROM python:3.12-slim-bookworm

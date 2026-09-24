@@ -20,7 +20,7 @@ Plan: [deck-polisher-build-plan.md](deck-polisher-build-plan.md). Last updated 2
 - Frontend: home with a real before/after slider, upload → quote → M-Pesa → live status (htmx) → preview gallery → download (signed URLs) → re-run; order history; sign-in and sign-up. Checked at 390px and 1280px.
 - Admin: orders with AI cost and margin columns, attempts, payments and events inline, and a mark-refunded action; price tiers, themes, and spend.
 - Rate limits on uploads and payments. Privacy and terms drafts (shown with a "draft" banner until `LEGAL_PAGES_REVIEWED=1`).
-- Docker Compose (web, worker, beat, postgres, redis, caddy) and `.env.example`.
+- Docker Compose (web, worker, beat, postgres, redis, caddy) and `.env.example`. The image builds, and the polisher (including LibreOffice previews) runs verified inside it.
 
 ## Needs Joe
 
