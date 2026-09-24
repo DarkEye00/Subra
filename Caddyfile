@@ -1,0 +1,8 @@
+# Automatic HTTPS (Let's Encrypt) for $DOMAIN. Daraja callbacks require HTTPS.
+{$DOMAIN} {
+	encode gzip zstd
+	request_body {
+		max_size 30MB
+	}
+	reverse_proxy web:8000
+}

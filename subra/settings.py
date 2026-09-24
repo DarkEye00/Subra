@@ -192,8 +192,9 @@ MPESA_CONSUMER_KEY = env("MPESA_CONSUMER_KEY", "")
 MPESA_CONSUMER_SECRET = env("MPESA_CONSUMER_SECRET", "")
 MPESA_SHORTCODE = env("MPESA_SHORTCODE", "")
 MPESA_PASSKEY = env("MPESA_PASSKEY", "")
-MPESA_CALLBACK_URL = env("MPESA_CALLBACK_URL", "")  # must be HTTPS and end with the callback secret path
 MPESA_CALLBACK_SECRET = env("MPESA_CALLBACK_SECRET", "")
+# Daraja needs a public HTTPS URL; by default it's derived from SITE_URL and the secret.
+MPESA_CALLBACK_URL = env("MPESA_CALLBACK_URL", f"{SITE_URL}/billing/mpesa/callback/{MPESA_CALLBACK_SECRET}/")
 MPESA_TRANSACTION_TYPE = env("MPESA_TRANSACTION_TYPE", "CustomerPayBillOnline")  # or CustomerBuyGoodsOnline
 MPESA_PARTY_B = env("MPESA_PARTY_B", "")  # till number for Buy Goods; defaults to the shortcode
 
