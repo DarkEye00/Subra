@@ -45,3 +45,4 @@ Plan: [deck-polisher-build-plan.md](deck-polisher-build-plan.md). Last updated 2
 - SmartArt parsing is unit-tested against XML but not yet against a real SmartArt deck.
 - Images python-pptx can't re-insert (rare formats) would fail rendering and trigger a retry or refund.
 - Text fitting uses metric-compatible fonts. If a customer's machine lacks Cambria (the Navy theme headings), PowerPoint substitutes a font and titles may reflow slightly.
+- LibreOffice parses customer files to make previews, which is a known attack surface. It runs in the worker container as a non-root user, with a timeout and a fresh profile per job. Keep the image updated.
