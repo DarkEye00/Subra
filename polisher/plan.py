@@ -128,8 +128,10 @@ def _accepts(slot, item):
 
 
 def _highlight_ok(highlight, item):
+    """A highlight must be the exact start of the paragraph, ending at a word boundary."""
     h = normalize_text(highlight)
-    return bool(h) and normalize_text(item.text).startswith(h)
+    text = normalize_text(item.text)
+    return bool(h) and text.startswith(h) and (len(text) == len(h) or text[len(h)] == " ")
 
 
 # --- validation -----------------------------------------------------------

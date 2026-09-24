@@ -214,3 +214,12 @@ def test_repair_moves_item_back_to_its_own_slide(deck):
 
     plan, _ = repaired(deck, mutate)
     assert "s2-t4" in plan.slides[1].slots["body"]
+
+
+def test_highlight_must_end_at_a_word_boundary(deck):
+    def mutate(s):
+        s[1] = {"source_slide": 2, "layout": "stats",
+                "slots": {"title": ["s2-t1"], "stats": [{"ids": ["s2-t2"], "highlight": "Revenue gr"}],
+                          "body": ["s2-t3", "s2-t4"]}}
+
+    assert_error(errors_for(deck, mutate), "highlight", "s2-t2")
