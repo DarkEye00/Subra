@@ -1,0 +1,20 @@
+<div hx-get="{% url 'orders:status' order.public_id %}?from={{ order.status }}" hx-trigger="every 3s" hx-swap="outerHTML">
+  {% if order.status == 'payment_pending' %}
+    <h2 class="text-2xl font-bold tracking-tight">Check your phone</h2>
+    <p class="mt-2 text-muted">Enter your M-Pesa PIN to pay KES {{ order.price_kes }}. This page updates when the payment goes through.</p>
+    <div class="progress-bar mt-6" aria-hidden="true"></div>
+    {% if waited > 90 %}
+      <p class="mt-4 text-sm text-muted">No prompt? It may have timed out. We'll confirm with M-Pesa within a few minutes, and you can try again once it's cancelled.</p>
+    {% endif %}
+  {% else %}
+    <h2 class="text-2xl font-bold tracking-tight">{% if order.waiting_for_capacity %}Your deck is in the queue{% else %}Polishing your deck{% endif %}</h2>
+    <p class="mt-2 text-muted">
+      {% if order.waiting_for_capacity %}
+        We're busy right now. Your deck will start soon, and your payment is safe.
+      {% else %}
+        Planning layouts, rebuilding slides, then checking that every word and number made it across. This usually takes one to three minutes. You can leave this page.
+      {% endif %}
+    </p>
+    <div class="progress-bar mt-6" aria-hidden="true"></div>
+  {% endif %}
+</div>

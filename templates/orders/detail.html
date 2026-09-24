@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}{{ order.original_name }}: SUBRA{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-3xl">
+  <a href="{% url 'orders:list' %}" class="text-sm font-bold text-muted hover:text-ink">My decks</a>
+  <h1 class="mt-2 break-words text-3xl font-extrabold tracking-tight">{{ order.original_name }}</h1>
+  <p class="mt-1 text-muted">{{ order.slide_count }} slides</p>
+
+  {% if order.status == 'quoted' or order.status == 'payment_failed' %}
+    {% if order.status == 'payment_failed' and last_payment %}
+      <p class="mt-6 rounded-lg bg-danger-soft px-4 py-3 font-bold text-danger">{{ last_payment.customer_message }} You haven't been charged. You can try again below.</p>
+    {% endif %}
+
+    <form method="post" action="{% url 'orders:pay' order.public_id %}" class="mt-8"
+          onsubmit="this.querySelector('[data-pay]').disabled = true; this.querySelector('[data-pay]').textContent = 'Sending the M-Pesa prompt…'">
+      {% csrf_token %}
+      <fieldset>
+        <legend class="text-lg font-bold">Choose a theme</legend>
+        <div class="mt-3 grid gap-3 sm:grid-cols-3">
+          {% for theme in themes %}
+          <label class="block cursor-pointer rounded-xl border-2 border-line bg-white p-2 hover:border-ink/40 has-checked:border-ink">
+            <input type="radio" name="theme" value="{{ theme.slug }}" class="sr-only" {% if theme == order.theme %}checked{% endif %}>
+            <img src="{{ theme.preview_url }}" alt="" class="aspect-video w-full rounded-md object-cover" width="640" height="360">
+            <span class="mt-2 block px-1 font-bold">{{ theme.name }}</span>
+            <span class="block px-1 pb-1 text-sm text-muted">{{ theme.description }}</span>
+          </label>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <div class="panel mt-8 p-5 sm:p-6">
+        <div class="flex items-baseline justify-between gap-4">
+          <span class="text-lg font-bold">Total</span>
+          <span class="text-3xl font-extrabold tracking-tight">KES {{ order.price_kes }}</span>
+        </div>
+        <p class="mt-1 text-sm text-muted">{{ order.tier.name }} deck, one free re-run included.</p>
+        <label for="phone" class="mt-6 block font-bold">M-Pesa number</label>
+        <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required
+               value="{{ phone }}" placeholder="0712 345 678" class="field mt-2">
+        <button class="btn-primary mt-4 w-full" data-pay>Pay KES {{ order.price_kes }} with M-Pesa</button>
+        <p class="mt-3 text-sm text-muted">You'll get a prompt on your phone. Nothing is sent for redesign until the payment goes through.</p>
+      </div>
+    </form>
+
+    {% if dev_payment %}
+      <form method="post" action="{% url 'orders:dev_pay' order.public_id %}" class="mt-4">
+        {% csrf_token %}
+        <input type="hidden" name="theme" value="{{ order.theme.slug }}">
+        <button class="btn-quiet w-full text-sm">Development: simulate a successful payment</button>
+      </form>
+    {% endif %}
+
+  {% elif polling %}
+    <div class="panel mt-8 p-6">{% include "orders/_status.html" with waited=0 %}</div>
+
+  {% elif order.status == 'done' %}
+    <div class="panel mt-8 p-5 sm:p-6">
+      <h2 class="text-2xl font-bold tracking-tight">Your deck is ready</h2>
+      <p class="mt-1 text-muted">{{ order.theme.name }} theme. Every word and number was checked against your original.</p>
+      <a href="{% url 'orders:download' order.public_id %}" class="btn-primary mt-5 w-full sm:w-auto">Download the .pptx</a>
+      <p class="mt-3 text-sm text-muted">Available until {{ order.expires_at|date:"j M Y" }}, then deleted.</p>
+      {% if overflow %}
+        <p class="mt-4 rounded-lg bg-marigold-soft px-4 py-3 text-sm">Slide{{ overflow|length|pluralize }} {{ overflow|join:", " }} {{ overflow|length|pluralize:"has,have" }} a lot of text, so the type is small. Consider splitting {{ overflow|length|pluralize:"it,them" }} in PowerPoint.</p>
+      {% endif %}
+    </div>
+
+    {% if previews %}
+    <section class="mt-10">
+      <h2 class="text-lg font-bold">Preview</h2>
+      <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {% for url in previews %}
+          <a href="{{ url }}" target="_blank" rel="noopener" class="block overflow-hidden rounded-lg border border-line bg-white hover:border-ink">
+            <img src="{{ url }}" alt="Slide {{ forloop.counter }}" loading="lazy" class="w-full">
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {% if order.can_rerun %}
+    <form method="post" action="{% url 'orders:rerun' order.public_id %}" class="panel mt-10 p-5 sm:p-6">
+      {% csrf_token %}
+      <h2 class="text-lg font-bold">Try a different theme</h2>
+      <p class="mt-1 text-muted">Your order includes one free re-run.</p>
+      <div class="mt-4 flex flex-wrap gap-2">
+        {% for theme in themes %}{% if theme != order.theme %}
+          <button name="theme" value="{{ theme.slug }}" class="btn-quiet">Redo in {{ theme.name }}</button>
+        {% endif %}{% endfor %}
+      </div>
+    </form>
+    {% endif %}
+
+  {% elif order.status == 'failed' or order.status == 'refund_pending' %}
+    <div class="panel mt-8 p-6">
+      <h2 class="text-2xl font-bold tracking-tight">We couldn't polish this deck safely</h2>
+      <p class="mt-2 text-muted">Our checks found that the redesign could lose some of your content, so we stopped. We'll refund KES {{ order.price_kes }} to your M-Pesa number within one working day.</p>
+    </div>
+
+  {% elif order.status == 'refunded' %}
+    <div class="panel mt-8 p-6">
+      <h2 class="text-2xl font-bold tracking-tight">Refunded</h2>
+      <p class="mt-2 text-muted">KES {{ order.price_kes }} was returned to your M-Pesa number.</p>
+    </div>
+
+  {% elif order.status == 'expired' %}
+    <div class="panel mt-8 p-6">
+      <h2 class="text-2xl font-bold tracking-tight">Files deleted</h2>
+      <p class="mt-2 text-muted">We delete decks and previews {{ retention_days }} days after they're ready. Upload the deck again if you need it polished.</p>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}My decks: SUBRA{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-baseline justify-between gap-4">
+  <h1 class="text-3xl font-extrabold tracking-tight">My decks</h1>
+  <a href="{% url 'home' %}" class="btn-primary">Upload a deck</a>
+</div>
+{% if orders %}
+  <ul class="panel mt-6 divide-y divide-line">
+    {% for order in orders %}{% include "orders/_order_row.html" %}{% endfor %}
+  </ul>
+{% else %}
+  <p class="mt-6 text-muted">You haven't uploaded a deck yet. Upload a .pptx to see its price.</p>
+{% endif %}
+{% endblock %}

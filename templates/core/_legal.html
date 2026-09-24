@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<article class="mx-auto max-w-2xl leading-relaxed [&_h2]:mt-10 [&_h2]:text-xl [&_h2]:font-bold [&_p]:mt-3 [&_li]:mt-2 [&_ul]:mt-3 [&_ul]:list-disc [&_ul]:pl-5">
+  {% if not reviewed %}
+    <p class="!mt-0 mb-8 rounded-lg bg-marigold-soft px-4 py-3 text-sm font-bold">Draft: this page is waiting for legal review and may change before launch.</p>
+  {% endif %}
+  {% block legal %}{% endblock %}
+</article>
+{% endblock %}

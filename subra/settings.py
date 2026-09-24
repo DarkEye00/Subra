@@ -179,6 +179,9 @@ USD_KES_RATE = float(env("USD_KES_RATE", "129.20"))
 CARD_FX_MARKUP = float(env("CARD_FX_MARKUP", "0.03"))
 PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.02"))
 FILE_RETENTION_DAYS = int(env("FILE_RETENTION_DAYS", "7"))
+# Privacy and terms pages show a "draft" banner until Joe has reviewed them (build plan, section 10).
+LEGAL_PAGES_REVIEWED = env_bool("LEGAL_PAGES_REVIEWED", False)
+SUPPORT_EMAIL = env("SUPPORT_EMAIL", "support@example.co.ke")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_SLIDES = 50
 UPLOAD_RATE_LIMIT = (10, 3600)  # uploads per hour, per user and per IP

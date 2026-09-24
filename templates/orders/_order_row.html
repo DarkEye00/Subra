@@ -1,0 +1,12 @@
+<li>
+  <a href="{% url 'orders:detail' order.public_id %}" class="flex items-center justify-between gap-4 px-5 py-4 hover:bg-page">
+    <span class="min-w-0">
+      <span class="block truncate font-bold">{{ order.original_name }}</span>
+      <span class="block text-sm text-muted">{{ order.slide_count }} slides, {{ order.created_at|date:"j M Y" }}</span>
+    </span>
+    <span class="shrink-0 rounded-full px-3 py-1 text-sm font-bold
+      {% if order.status == 'done' %}bg-ok-soft text-ok{% elif order.status in 'failed refund_pending payment_failed' %}bg-danger-soft text-danger{% elif order.status == 'expired' or order.status == 'refunded' %}bg-page text-muted{% else %}bg-marigold-soft text-ink{% endif %}">
+      {{ order.get_status_display }}
+    </span>
+  </a>
+</li>

@@ -1,0 +1,52 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}SUBRA: polished PowerPoint decks{% endblock %}</title>
+  <meta name="description" content="Upload a PowerPoint, pay with M-Pesa, and download a polished, fully editable deck. Every word and number stays.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <script src="{% static 'js/htmx.min.js' %}" defer></script>
+</head>
+<body class="min-h-screen flex flex-col" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <header class="border-b border-line bg-white">
+    <nav class="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
+      <a href="{% url 'home' %}" class="text-xl font-extrabold tracking-tight">SUBRA</a>
+      <div class="flex items-center gap-1 text-sm font-bold">
+        {% if user.is_authenticated %}
+          <a href="{% url 'orders:list' %}" class="rounded-lg px-3 py-2 hover:bg-page">My decks</a>
+          <form method="post" action="{% url 'logout' %}">{% csrf_token %}
+            <button class="rounded-lg px-3 py-2 text-muted hover:bg-page hover:text-ink">Sign out</button>
+          </form>
+        {% else %}
+          <a href="{% url 'login' %}" class="rounded-lg px-3 py-2 hover:bg-page">Sign in</a>
+          <a href="{% url 'signup' %}" class="rounded-lg bg-ink px-3 py-2 text-white hover:bg-ink-soft">Create account</a>
+        {% endif %}
+      </div>
+    </nav>
+  </header>
+
+  {% if messages %}
+  <div class="mx-auto w-full max-w-5xl px-4 pt-4 sm:px-6" role="status">
+    {% for message in messages %}
+      <p class="mb-2 rounded-lg px-4 py-3 text-sm font-bold {% if message.tags == 'error' %}bg-danger-soft text-danger{% else %}bg-ok-soft text-ok{% endif %}">{{ message }}</p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <main class="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6 sm:py-12">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="border-t border-line bg-white">
+    <div class="mx-auto flex max-w-5xl flex-wrap gap-x-6 gap-y-2 px-4 py-6 text-sm text-muted sm:px-6">
+      <span>SUBRA, Nairobi</span>
+      <a href="{% url 'privacy' %}" class="hover:text-ink">Privacy</a>
+      <a href="{% url 'terms' %}" class="hover:text-ink">Terms</a>
+    </div>
+  </footer>
+</body>
+</html>

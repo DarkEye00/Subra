@@ -1,0 +1,16 @@
+from django.urls import path
+
+from . import views
+
+app_name = "orders"
+urlpatterns = [
+    path("upload/", views.upload, name="upload"),
+    path("", views.order_list, name="list"),
+    path("<uuid:public_id>/", views.detail, name="detail"),
+    path("<uuid:public_id>/pay/", views.pay, name="pay"),
+    path("<uuid:public_id>/status/", views.status, name="status"),
+    path("<uuid:public_id>/rerun/", views.rerun, name="rerun"),
+    path("<uuid:public_id>/download/", views.download, name="download"),
+    path("<uuid:public_id>/dev-pay/", views.dev_pay, name="dev_pay"),
+    path("files/<str:token>/", views.serve_file, name="file"),
+]

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Create an account: SUBRA{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-sm">
+  <h1 class="text-3xl font-extrabold tracking-tight">Create an account</h1>
+  <p class="mt-2 text-muted">You'll use it to see your orders and download your decks.</p>
+  <form method="post" class="mt-6">
+    {% csrf_token %}
+    {% include "accounts/_form_errors.html" %}
+    {% include "accounts/_field.html" with field=form.email type="email" autocomplete="email" %}
+    {% include "accounts/_field.html" with field=form.password1 type="password" autocomplete="new-password" help="At least 8 characters, not only numbers." %}
+    {% include "accounts/_field.html" with field=form.password2 type="password" autocomplete="new-password" %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn-primary mt-6 w-full">Create account</button>
+  </form>
+  <p class="mt-4 text-sm text-muted">By creating an account you agree to the <a href="{% url 'terms' %}" class="underline underline-offset-2">terms</a> and <a href="{% url 'privacy' %}" class="underline underline-offset-2">privacy policy</a>.</p>
+  <p class="mt-6 text-sm text-muted">Already have an account? <a href="{% url 'login' %}" class="font-bold text-ink underline underline-offset-2">Sign in</a></p>
+</div>
+{% endblock %}

@@ -1,0 +1,104 @@
+from decimal import Decimal
+
+from django.conf import settings
+from django.contrib import admin, messages
+from django.db.models import DecimalField, Sum, Value
+from django.db.models.functions import Coalesce
+
+from billing.models import Payment
+
+from .models import AIJob, DailySpend, Order, OrderEvent, Theme
+
+ZERO = Value(Decimal("0"), output_field=DecimalField(max_digits=10, decimal_places=2))
+
+
+class AIJobInline(admin.TabularInline):
+    model = AIJob
+    extra = 0
+    can_delete = False
+    fields = ("run", "attempt_number", "model", "input_tokens", "output_tokens", "cache_read_tokens",
+              "cost_usd", "cost_kes", "duration_ms", "verification_passed", "repairs", "error")
+    readonly_fields = fields
+
+
+class PaymentInline(admin.TabularInline):
+    model = Payment
+    extra = 0
+    can_delete = False
+    fields = ("created_at", "phone", "amount_kes", "status", "mpesa_receipt", "result_code", "result_desc")
+    readonly_fields = fields
+
+
+class OrderEventInline(admin.TabularInline):
+    model = OrderEvent
+    extra = 0
+    can_delete = False
+    fields = ("created_at", "from_status", "to_status", "note")
+    readonly_fields = fields
+
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = ("original_name", "user", "status", "slide_count", "price_kes", "ai_cost", "margin",
+                    "theme", "created_at")
+    list_filter = ("status", "product_type", "theme", "rerun_used", "waiting_for_capacity")
+    search_fields = ("original_name", "user__email", "public_id", "payments__mpesa_receipt", "payments__phone")
+    readonly_fields = ("public_id", "user", "product_type", "original_name", "slide_count", "tier", "price_kes",
+                       "status", "original_file", "result_file", "preview_images", "overflow_slides", "rerun_used",
+                       "waiting_for_capacity", "failure_reason", "created_at", "updated_at", "expires_at",
+                       "files_deleted_at", "ai_cost", "margin")
+    fields = readonly_fields + ("theme",)
+    inlines = [PaymentInline, AIJobInline, OrderEventInline]
+    actions = ["mark_refunded"]
+    date_hierarchy = "created_at"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("user", "theme").annotate(
+            _ai_cost_kes=Coalesce(Sum("ai_jobs__cost_kes"), ZERO)
+        )
+
+    @admin.display(description="AI cost (KES)", ordering="_ai_cost_kes")
+    def ai_cost(self, obj):
+        return f"{getattr(obj, '_ai_cost_kes', obj.ai_cost_kes):.2f}"
+
+    @admin.display(description="Margin (KES)")
+    def margin(self, obj):
+        if obj.status in (Order.Status.UPLOADED, Order.Status.QUOTED, Order.Status.PAYMENT_PENDING,
+                          Order.Status.PAYMENT_FAILED, Order.Status.REFUNDED):
+            return "-"
+        cost = getattr(obj, "_ai_cost_kes", obj.ai_cost_kes)
+        fees = Decimal(obj.price_kes) * Decimal(str(settings.PAYMENT_FEE_RATE))
+        return f"{Decimal(obj.price_kes) - cost - fees:.2f}"
+
+    @admin.action(description="Mark refunded (after refunding via M-Pesa)")
+    def mark_refunded(self, request, queryset):
+        done = 0
+        for order in queryset.filter(status=Order.Status.REFUND_PENDING):
+            order.transition(Order.Status.REFUNDED, note=f"Refund confirmed by {request.user.email}")
+            done += 1
+        self.message_user(request, f"{done} order(s) marked refunded.",
+                          messages.SUCCESS if done else messages.WARNING)
+
+
+@admin.register(AIJob)
+class AIJobAdmin(admin.ModelAdmin):
+    list_display = ("order", "run", "attempt_number", "model", "input_tokens", "output_tokens", "cost_usd",
+                    "cost_kes", "verification_passed", "created_at")
+    list_filter = ("model", "verification_passed", "planner")
+    readonly_fields = [f.name for f in AIJob._meta.fields]
+
+
+@admin.register(DailySpend)
+class DailySpendAdmin(admin.ModelAdmin):
+    list_display = ("date", "total_cost_usd", "cap", "alert_sent")
+    readonly_fields = ("date", "total_cost_usd", "alert_sent")
+
+    @admin.display(description="Cap (USD)")
+    def cap(self, obj):
+        return settings.AI_DAILY_CAP_USD
+
+
+@admin.register(Theme)
+class ThemeAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug", "active", "sort_order")
+    list_editable = ("active", "sort_order")

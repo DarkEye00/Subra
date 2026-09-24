@@ -1,0 +1,8 @@
+<div class="mt-4">
+  <label for="{{ field.id_for_label }}" class="block font-bold">{{ field.label }}</label>
+  <input id="{{ field.id_for_label }}" name="{{ field.html_name }}" type="{{ type }}" class="field mt-2"
+         {% if field.value and type != 'password' %}value="{{ field.value }}"{% endif %}
+         {% if autocomplete %}autocomplete="{{ autocomplete }}"{% endif %} required>
+  {% for e in field.errors %}<p class="mt-1 text-sm font-bold text-danger">{{ e }}</p>{% endfor %}
+  {% if help %}<p class="mt-1 text-sm text-muted">{{ help }}</p>{% endif %}
+</div>

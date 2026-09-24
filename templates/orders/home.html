@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block content %}
+<section class="grid gap-10 lg:grid-cols-[1fr_1.2fr] lg:items-center">
+  <div>
+    <h1 class="text-[2.6rem] font-extrabold leading-[1.02] tracking-[-0.03em] sm:text-6xl">Upload a rough deck. Download a polished one.</h1>
+    <p class="mt-5 max-w-[34rem] text-lg leading-relaxed text-muted">
+      SUBRA redesigns your PowerPoint in a professional theme. Every word, number, table and chart stays exactly as you wrote it, and the file stays fully editable.
+    </p>
+
+    {% if user.is_authenticated %}
+      {% include "orders/_upload.html" %}
+    {% else %}
+      <div class="mt-8 flex flex-wrap gap-3">
+        <a href="{% url 'signup' %}" class="btn-primary">Create an account</a>
+        <a href="{% url 'login' %}" class="btn-quiet">Sign in</a>
+      </div>
+      <p class="mt-4 text-sm text-muted">From KES {{ tiers.0.price_kes|default:"200" }} per deck. Pay with M-Pesa.</p>
+    {% endif %}
+  </div>
+
+  <figure>
+    <div class="compare border border-line" style="--pos: 50%">
+      <img src="{% static 'img/after.jpg' %}" alt="The same slide after SUBRA: four large figures in cards, in the Navy Executive theme" width="1280" height="720">
+      <img src="{% static 'img/before.jpg' %}" alt="The original slide: a plain bulleted list of four figures" class="compare-before" width="1280" height="720">
+      <div class="compare-handle"></div>
+      <input type="range" min="0" max="100" value="50" aria-label="Drag to compare the original slide with the polished one"
+             oninput="this.parentElement.style.setProperty('--pos', this.value + '%')">
+    </div>
+    <figcaption class="mt-3 flex justify-between text-sm text-muted">
+      <span>Your slide</span>
+      <span>After SUBRA, same words and numbers</span>
+    </figcaption>
+  </figure>
+</section>
+
+{% if recent %}
+<section class="mt-16">
+  <div class="flex items-baseline justify-between">
+    <h2 class="text-2xl font-bold tracking-tight">Your recent decks</h2>
+    <a href="{% url 'orders:list' %}" class="text-sm font-bold text-muted hover:text-ink">See all</a>
+  </div>
+  <ul class="mt-4 divide-y divide-line panel">
+    {% for order in recent %}{% include "orders/_order_row.html" %}{% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="mt-20">
+  <h2 class="text-2xl font-bold tracking-tight">How it works</h2>
+  <ol class="mt-6 grid gap-6 sm:grid-cols-3">
+    <li class="border-t-4 border-ink pt-4">
+      <span class="text-4xl font-extrabold text-marigold">1</span>
+      <h3 class="mt-2 text-lg font-bold">Upload your .pptx</h3>
+      <p class="mt-1 text-muted">Up to {{ max_slides }} slides and {{ max_mb }} MB. You see the price before you pay.</p>
+    </li>
+    <li class="border-t-4 border-ink pt-4">
+      <span class="text-4xl font-extrabold text-marigold">2</span>
+      <h3 class="mt-2 text-lg font-bold">Pay with M-Pesa</h3>
+      <p class="mt-1 text-muted">Pick a theme, enter your number, and approve the prompt on your phone.</p>
+    </li>
+    <li class="border-t-4 border-ink pt-4">
+      <span class="text-4xl font-extrabold text-marigold">3</span>
+      <h3 class="mt-2 text-lg font-bold">Download and edit</h3>
+      <p class="mt-1 text-muted">Most decks are ready in under five minutes. Open them in PowerPoint and keep editing.</p>
+    </li>
+  </ol>
+</section>
+
+<section class="mt-20 grid gap-10 lg:grid-cols-[1fr_1.4fr]">
+  <div>
+    <h2 class="text-2xl font-bold tracking-tight">Prices</h2>
+    <p class="mt-2 text-muted">One price per deck, set by its number of slides. Includes one free re-run in a different theme.</p>
+    <table class="mt-6 w-full text-left">
+      <tbody class="divide-y divide-line border-y border-line">
+        {% for tier in tiers %}
+        <tr>
+          <td class="py-3">{{ tier.min_units }} to {{ tier.max_units }} slides</td>
+          <td class="py-3 text-right text-lg font-bold">KES {{ tier.price_kes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div>
+    <h2 class="text-2xl font-bold tracking-tight">Themes</h2>
+    <div class="mt-6 grid gap-5 sm:grid-cols-3">
+      {% for theme in themes %}
+      <figure>
+        <img src="{{ theme.preview_url }}" alt="Cover slide in the {{ theme.name }} theme" class="aspect-video w-full rounded-lg border border-line object-cover" loading="lazy" width="640" height="360">
+        <figcaption class="mt-2">
+          <span class="font-bold">{{ theme.name }}</span>
+          <span class="block text-sm text-muted">{{ theme.description }}</span>
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="mt-20 grid gap-6 sm:grid-cols-2">
+  <div class="panel p-6">
+    <h2 class="text-lg font-bold">Your content is checked, not rewritten</h2>
+    <p class="mt-2 text-muted">After redesigning, SUBRA compares the new deck with yours: every paragraph, number, table cell, chart value, image and speaker note. If anything is missing, it tries again. If it still can't, you get a full refund.</p>
+  </div>
+  <div class="panel p-6">
+    <h2 class="text-lg font-bold">Your files are deleted after {{ retention_days }} days</h2>
+    <p class="mt-2 text-muted">Nobody at SUBRA opens your deck unless you ask for help. Slide text is sent to Anthropic's Claude to plan the layout. <a href="{% url 'privacy' %}" class="font-bold text-ink underline underline-offset-2">How we handle your files</a></p>
+  </div>
+</section>
+{% endblock %}

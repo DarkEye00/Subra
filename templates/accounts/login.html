@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Sign in: SUBRA{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-sm">
+  <h1 class="text-3xl font-extrabold tracking-tight">Sign in</h1>
+  <form method="post" class="mt-6">
+    {% csrf_token %}
+    {% include "accounts/_form_errors.html" %}
+    {% include "accounts/_field.html" with field=form.username type="email" autocomplete="email" %}
+    {% include "accounts/_field.html" with field=form.password type="password" autocomplete="current-password" %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="btn-primary mt-6 w-full">Sign in</button>
+  </form>
+  <p class="mt-6 text-sm text-muted">New to SUBRA? <a href="{% url 'signup' %}{% if next %}?next={{ next|urlencode }}{% endif %}" class="font-bold text-ink underline underline-offset-2">Create an account</a></p>
+</div>
+{% endblock %}

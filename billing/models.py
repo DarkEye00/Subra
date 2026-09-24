@@ -59,3 +59,15 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"KES {self.amount_kes} from {self.phone} ({self.status})"
+
+    FAILURE_MESSAGES = {
+        "1032": "You cancelled the M-Pesa prompt.",
+        "1037": "The M-Pesa prompt timed out before a PIN was entered.",
+        "1": "Your M-Pesa balance was too low for this payment.",
+        "2001": "The M-Pesa PIN was incorrect.",
+        "timeout": "We didn't get a confirmation from M-Pesa.",
+    }
+
+    @property
+    def customer_message(self):
+        return self.FAILURE_MESSAGES.get(self.result_code, "M-Pesa didn't complete the payment.")

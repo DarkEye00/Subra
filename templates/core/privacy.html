@@ -1,0 +1,32 @@
+{% extends "core/_legal.html" %}
+{% block title %}Privacy: SUBRA{% endblock %}
+{% block legal %}
+{# REVIEW (Joe): confirm Anthropic's current commercial data terms and SUBRA's ODPC registration before setting LEGAL_PAGES_REVIEWED=1. #}
+<h1 class="text-3xl font-extrabold tracking-tight">How we handle your files</h1>
+<p>SUBRA redesigns PowerPoint decks. This page explains what we store, why, for how long, and who else processes it. We act as a data controller under Kenya's Data Protection Act, 2019.</p>
+
+<h2>What we store</h2>
+<ul>
+  <li>Your account: email address and a hashed password.</li>
+  <li>Your decks: the file you upload, the polished file, and preview images of its slides.</li>
+  <li>Payments: the M-Pesa number you pay from, the amount, the M-Pesa receipt number, and the status messages M-Pesa sends us.</li>
+  <li>Service records: order history and technical logs, such as processing times and costs.</li>
+</ul>
+
+<h2>How long we keep it</h2>
+<p>Uploaded decks, polished decks, and previews are deleted automatically {{ retention_days }} days after upload, or {{ retention_days }} days after your polished deck is ready, whichever is later. Deletion is permanent: we can't recover a deck after that.</p>
+<p>We keep order and payment records (without the files) for as long as the law requires for accounting and tax, and your account until you ask us to close it.</p>
+
+<h2>Who can see your deck</h2>
+<p>Nobody at SUBRA opens your deck unless you ask us for help with an order. Files are stored in a private storage bucket, and download links expire after one hour.</p>
+
+<h2>Other companies involved</h2>
+<ul>
+  <li><strong>Anthropic</strong> (Claude API): to plan the new layout, we send the text and structure of your slides, such as paragraphs, table sizes and chart names, to Anthropic's Claude API. We don't send your images. Anthropic processes this under its commercial terms.</li>
+  <li><strong>Safaricom</strong> (M-Pesa): processes your payment.</li>
+  <li><strong>DigitalOcean</strong>: hosts our servers and file storage.</li>
+</ul>
+
+<h2>Your rights</h2>
+<p>You can ask us for a copy of your data, to correct it, or to delete your account and any files we still hold. Email <a href="mailto:{{ support_email }}" class="underline underline-offset-2">{{ support_email }}</a>. You can also complain to the Office of the Data Protection Commissioner.</p>
+{% endblock %}

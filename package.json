@@ -1,0 +1,13 @@
+{
+  "name": "subra-frontend",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i static/src/app.css -o static/css/app.css --minify",
+    "watch:css": "tailwindcss -i static/src/app.css -o static/css/app.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.0",
+    "tailwindcss": "^4.1.0",
+    "htmx.org": "^2.0.4"
+  }
+}
