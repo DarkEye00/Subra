@@ -27,7 +27,7 @@ def test_heuristic_plan_for_rich_deck_is_valid(tmp_path):
     deck = extract_deck(build_rich_deck(tmp_path / "rich.pptx"))
     plan = plan_deck(deck)
     assert validate_plan(plan, deck) == []
-    assert [p.layout for p in plan.slides] == ["title", "bullets", "table", "chart", "image_text", "chart", "quote"]
+    assert [p.layout for p in plan.slides] == ["title", "bullets", "table", "chart", "image_text", "chart", "title"]
 
 
 def test_number_led_paragraphs_become_stats_with_highlights(tmp_path):

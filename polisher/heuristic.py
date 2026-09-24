@@ -55,8 +55,8 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
 
     total_chars = sum(len(t.text) for t in texts)
     if is_last_slide and total_chars <= 120 and len(texts) <= 3:
-        quote = titles or [texts[0].id]
-        return [PlannedSlide(source_slide, "quote", slots(quote=quote, attribution=[t.id for t in texts if t.id not in quote]))]
+        closing = titles or [texts[0].id]
+        return [PlannedSlide(source_slide, "title", slots(title=closing, subtitle=[t.id for t in texts if t.id not in closing]))]
 
     if not body:
         if not titles:
@@ -69,8 +69,15 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
 
     columns = _two_boxes(body)
     if columns and not subs:
-        left, right = columns
-        return [PlannedSlide(source_slide, "two_column", slots(title=titles, left=left, right=right))]
+        by_id = {t.id: t for t in body}
+        cols = {}
+        for side, ids in zip(("left", "right"), columns):
+            paras = [by_id[i] for i in ids]
+            if len(paras) > 1 and paras[0].level == 0 and all(p.level > 0 for p in paras[1:]):
+                cols[f"{side}_title"], cols[side] = ids[:1], ids[1:]
+            else:
+                cols[side] = ids
+        return [PlannedSlide(source_slide, "two_column", slots(title=titles, **cols))]
 
     chunks = _chunk_body([t for t in rest if t.id in subs] + body)
     out = [PlannedSlide(source_slide, "bullets", slots(title=titles, body=chunks[0]))]
