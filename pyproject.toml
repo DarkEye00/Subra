@@ -1,0 +1,11 @@
+[project]
+name = "subra"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: needs LibreOffice or other external binaries",
+]
