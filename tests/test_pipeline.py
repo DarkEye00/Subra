@@ -132,3 +132,18 @@ def test_before_attempt_hook_runs_before_each_ai_call(tmp_path, deck_path):
     polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=ScriptedPlanner(["bad", "good"]),
            before_attempt=lambda number, planner: seen.append(number))
     assert seen == [1, 2]
+
+
+def test_on_attempt_reports_each_attempt_as_it_finishes(tmp_path, deck_path):
+    seen = []
+    polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=ScriptedPlanner(["bad", "good"]),
+           on_attempt=lambda record: seen.append((record.number, record.error, record.verification_passed)))
+    assert seen == [(1, "bad output", None), (2, None, True)]
+
+
+def test_on_attempt_sees_the_attempt_before_an_outage_is_raised(tmp_path, deck_path):
+    seen = []
+    with pytest.raises(PlannerUnavailable):
+        polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=ScriptedPlanner(["outage"]),
+               on_attempt=seen.append)
+    assert len(seen) == 1

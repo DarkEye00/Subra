@@ -50,6 +50,7 @@ class AttemptRecord:
     problems: list = field(default_factory=list)
     repairs: list = field(default_factory=list)
     error: str | None = None
+    retryable: bool = False  # the provider was unavailable; worth retrying the whole job later
     plan: dict | None = None
 
 
@@ -72,7 +73,10 @@ class PolishResult:
         return self.render_report.overflow_slides if self.render_report else []
 
 
-def polish(input_path, output_path, theme, planner, escalation=None, render_fn=render, before_attempt=None):
+def polish(input_path, output_path, theme, planner, escalation=None, render_fn=render, before_attempt=None,
+           on_attempt=None):
+    """Run the whole pipeline. ``before_attempt(number, planner)`` runs before each AI call (the
+    spend cap hooks in here); ``on_attempt(record)`` runs as soon as each attempt finishes."""
     input_path, output_path = Path(input_path), Path(output_path)
     info = validate_file(input_path)
     deck = extract_deck(input_path)
@@ -86,50 +90,61 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
     for number, current in enumerate(schedule, start=1):
         if before_attempt is not None:
             before_attempt(number, current)
-        attempt = current.plan(deck, feedback=feedback)
-        record = AttemptRecord(
-            number=number, planner=attempt.planner, model=attempt.model, usage=attempt.usage,
-            cost_usd=attempt.cost_usd, duration_ms=attempt.duration_ms, error=attempt.error,
-        )
+        record, feedback, success = _attempt(number, current, deck, feedback, theme_obj, output_path, render_fn)
         attempts.append(record)
-        if attempt.plan is None:
-            if attempt.retryable:
-                raise PlannerUnavailable(attempt.error or "planner unavailable", attempts)
-            feedback = [attempt.error or "The previous answer was not a usable plan."]
-            continue
-
-        plan, repairs = repair_plan(attempt.plan, deck)
-        record.repairs = repairs
-        record.plan = plan.to_dict()
-        errors = validate_plan(plan, deck)
-        if errors:
-            record.error = "Plan broke the rules after repair"
-            record.problems = errors
-            feedback = errors
-            continue
-
-        fd, tmp_name = tempfile.mkstemp(suffix=".pptx", dir=output_path.parent)
-        os.close(fd)
-        tmp = Path(tmp_name)
-        try:
-            report = render_fn(plan, deck, theme_obj, tmp)
-            verification = verify(deck, extract_deck(tmp))
-            record.verification_passed = verification.passed
-            record.problems = verification.problems
-            if verification.passed:
-                os.replace(tmp, output_path)
-                return PolishResult(
-                    ok=True, output_path=output_path, slide_count=info.slide_count, attempts=attempts,
-                    render_report=report, verification=verification,
-                )
-            feedback = verification.problems
-        except Exception as e:  # a renderer crash counts as a failed attempt, not a lost order
-            record.error = f"Render failed: {type(e).__name__}: {e}"
-            feedback = [f"Rendering this plan crashed ({type(e).__name__}). Try a different layout for the affected slides."]
-        finally:
-            tmp.unlink(missing_ok=True)
+        if on_attempt is not None:
+            on_attempt(record)
+        if record.retryable:
+            raise PlannerUnavailable(record.error, attempts)
+        if success is not None:
+            report, verification = success
+            return PolishResult(
+                ok=True, output_path=output_path, slide_count=info.slide_count, attempts=attempts,
+                render_report=report, verification=verification,
+            )
 
     return PolishResult(
         ok=False, output_path=None, slide_count=info.slide_count, attempts=attempts,
         failure=f"No plan passed verification after {len(attempts)} attempts",
     )
+
+
+def _attempt(number, planner, deck, feedback, theme, output_path, render_fn):
+    """One plan -> repair -> render -> verify pass. Returns (record, next_feedback, success)."""
+    attempt = planner.plan(deck, feedback=feedback)
+    record = AttemptRecord(
+        number=number, planner=attempt.planner, model=attempt.model, usage=attempt.usage,
+        cost_usd=attempt.cost_usd, duration_ms=attempt.duration_ms, error=attempt.error,
+    )
+    if attempt.plan is None:
+        record.retryable = attempt.retryable
+        return record, [attempt.error or "The previous answer was not a usable plan."], None
+
+    plan, repairs = repair_plan(attempt.plan, deck)
+    record.repairs = repairs
+    record.plan = plan.to_dict()
+    errors = validate_plan(plan, deck)
+    if errors:
+        record.error = "Plan broke the rules after repair"
+        record.problems = errors
+        return record, errors, None
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".pptx", dir=output_path.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        report = render_fn(plan, deck, theme, tmp)
+        verification = verify(deck, extract_deck(tmp))
+        record.verification_passed = verification.passed
+        record.problems = verification.problems
+        if verification.passed:
+            os.replace(tmp, output_path)
+            return record, None, (report, verification)
+        return record, verification.problems, None
+    except Exception as e:  # a renderer crash counts as a failed attempt, not a lost order
+        record.error = f"Render failed: {type(e).__name__}: {e}"
+        return record, [
+            f"Rendering this plan crashed ({type(e).__name__}). Try a different layout for the affected slides."
+        ], None
+    finally:
+        tmp.unlink(missing_ok=True)
