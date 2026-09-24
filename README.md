@@ -4,8 +4,8 @@ Upload a PowerPoint, pay per deck with M-Pesa, and get back a polished, fully ed
 
 ## How it fits together
 
-- `polisher/` is the core pipeline, a standalone package with no Django dependency: validate → extract → plan (Claude) → render → verify → preview.
-- `accounts/`, `billing/`, `orders/`, and `core/` make up the Django app: email login, price tiers and M-Pesa payments, orders with a logged state machine, Celery tasks, the admin, and privacy/terms pages.
+- `polisher/` is the core pipeline, a standalone package with no Django dependency: validate → extract → plan (Claude) → render (in place, on a copy of the customer's file) → verify → preview. Video, audio, embedded objects, equations, 3D models, SmartArt and ink are kept exactly and only moved or scaled.
+- `accounts/`, `billing/`, `orders/`, and `core/` make up the Django app: email login, price tiers and M-Pesa payments via IntaSend (behind a provider interface), orders with a logged state machine, Celery tasks, the admin, and privacy/terms pages.
 - `templates/` and `static/` hold the mobile-first frontend (Tailwind v4, htmx).
 
 ## Polish a deck from the command line
@@ -32,7 +32,7 @@ export DJANGO_DEBUG=1 POLISHER_PLANNER=heuristic   # or set ANTHROPIC_API_KEY an
 .venv/bin/python manage.py runserver
 ```
 
-Without `REDIS_URL`, Celery tasks run inline. Without Daraja credentials, DEBUG mode shows a "simulate a successful payment" button on the quote page, so you can try the whole flow.
+Without `REDIS_URL`, Celery tasks run inline. Without IntaSend keys, DEBUG mode shows a "simulate a successful payment" button on the quote page, so you can try the whole flow.
 
 ## Tests
 
@@ -40,7 +40,7 @@ Without `REDIS_URL`, Celery tasks run inline. Without Daraja credentials, DEBUG 
 .venv/bin/pytest
 ```
 
-The tests cover validation, extraction, verification, planning and repair, rendering round trips for every layout and theme, the retry and escalation pipeline, M-Pesa payments (idempotent callbacks, amount mismatches, late and duplicate payments), order processing, the spend cap, file deletion, and the views.
+The tests cover validation (including the 25/100 MB limits), extraction of every locked object type and image case, verification, planning and repair, in-place rendering round trips for every layout and theme, the retry and escalation pipeline, payments (IntaSend webhooks, idempotency, amount mismatches, late and duplicate payments), order processing, the spend cap, file deletion, and the views.
 
 ## Deploy (one DigitalOcean droplet, 4 GB RAM or more)
 
@@ -50,4 +50,4 @@ docker compose up -d --build
 docker compose exec web python manage.py createsuperuser
 ```
 
-Compose runs `web` (gunicorn), `worker` (Celery; runs LibreOffice), `beat` (file deletion, queue release, payment sweeps), `postgres`, `redis`, and `caddy` (automatic HTTPS for `DOMAIN`). Point the domain's DNS at the droplet before starting, because Daraja callbacks need HTTPS.
+Compose runs `web` (gunicorn), `worker` (Celery; runs LibreOffice), `beat` (file deletion, queue release, payment sweeps), `postgres`, `redis`, and `caddy` (automatic HTTPS for `DOMAIN`). Point the domain's DNS at the droplet before starting, because IntaSend webhooks need HTTPS. Register `https://<domain>/billing/webhooks/intasend/` in the IntaSend dashboard with the same challenge as `INTASEND_WEBHOOK_SECRET`.
