@@ -45,7 +45,7 @@ GAP = 0.35
 PAD = 0.3
 FOOTER_PLACEHOLDERS = {"ftr", "dt", "sldNum"}
 # locked objects whose content has a fixed text size: never enlarge them
-NO_UPSCALE = {"equation", "group", "smartart"}
+NO_UPSCALE = {"equation", "group", "smartart", "audio"}
 
 NUMERIC_CELL = re.compile(r"^[\s(]*[-+]?(?:KES|KSh|Ksh|USD|\$|€|£)?\s?[\d][\d,.]*\s?(?:%|m|bn|k|x)?\)?\s*$")
 
@@ -282,6 +282,8 @@ class _Renderer:
     # --- decoration -------------------------------------------------------
 
     def _rect(self, slide, box, color, shape=MSO_SHAPE.RECTANGLE, radius=None):
+        if any(box.intersects(z) for z in self.zones):
+            return None  # slide shapes draw over the master: never cover a logo with decoration
         sp = slide.shapes.add_shape(shape, *self._emu(box))
         sp.fill.solid()
         sp.fill.fore_color.rgb = _rgb(color)
@@ -391,7 +393,7 @@ class _Renderer:
             parts = [body[:split], body[split:]]
             fits = [self._fit(p, style, b) for p, b in zip(parts, boxes)]
             size = min(f.size for f in fits)
-            if size >= single.size + 3 or (not single.fits and all(f.fits for f in fits)):
+            if size >= single.size + 2 or (not single.fits and all(f.fits for f in fits)):
                 for p, b in zip(parts, boxes):
                     self._text(slide, b, p, style, size=size)
                 return slide

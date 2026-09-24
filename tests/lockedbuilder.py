@@ -234,6 +234,7 @@ def build_locked_deck(path):
     grp.shapes.add_textbox(Inches(1), Inches(5), Inches(4), Inches(0.6)).text_frame.text = "Ribbon cutting, Kisumu"
     vid = _add_video(s, 1, 1.8, 4, 3)
     grp._element.append(vid._element)  # move the video into the group
+    grp._element.recalculate_extents()
     prs.save(path)
     return path
 

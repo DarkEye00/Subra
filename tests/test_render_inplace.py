@@ -184,3 +184,14 @@ def test_wide_decks_stay_wide(tmp_path):
         for shape in slide.shapes:  # decoration may bleed off the edge; text never does
             if shape.has_text_frame and shape.text_frame.text.strip():
                 assert shape.left + shape.width <= result.slide_width + Inches(0.01)
+
+
+def test_decoration_never_covers_a_master_logo(tmp_path, images_src):
+    _, out, _ = polish(tmp_path, images_src)
+    logo = (Inches(8.6), Inches(0.2), Inches(1.2), Inches(0.6))
+    for slide in Presentation(out).slides:
+        for shape in slide.shapes:
+            if shape.shape_type == 1 and not shape.has_text_frame or (shape.has_text_frame and not shape.text_frame.text):
+                overlaps = (shape.left < logo[0] + logo[2] and logo[0] < shape.left + shape.width
+                            and shape.top < logo[1] + logo[3] and logo[1] < shape.top + shape.height)
+                assert not overlaps, shape.name
