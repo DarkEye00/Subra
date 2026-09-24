@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -10,6 +12,7 @@ from django.views.decorators.http import require_POST
 
 from billing import services as billing
 from billing.models import Payment, PriceTier, ProductType
+from billing.providers import PaymentEvent
 from core.ratelimit import allow
 
 from . import services
@@ -75,7 +78,7 @@ def detail(request, public_id):
         "phone": _local_phone(last_payment.phone if last_payment else request.user.mpesa_phone),
         "last_payment": last_payment,
         "polling": order.status in POLLING,
-        "dev_payment": settings.DEBUG and not settings.MPESA_CONSUMER_KEY,
+        "dev_payment": settings.DEBUG and not settings.INTASEND_SECRET_KEY,
         "retention_days": settings.FILE_RETENTION_DAYS,
     }
     if order.status == S.DONE and order.result_file:
@@ -154,20 +157,18 @@ def serve_file(request, token):
 @login_required
 @require_POST
 def dev_pay(request, public_id):
-    """DEBUG only, when no Daraja credentials are set: pretend M-Pesa confirmed the payment."""
-    if not settings.DEBUG or settings.MPESA_CONSUMER_KEY:
+    """DEBUG only, when no IntaSend keys are set: pretend M-Pesa confirmed the payment."""
+    if not settings.DEBUG or settings.INTASEND_SECRET_KEY:
         raise Http404
     order = _own_order(request, public_id)
     theme = Theme.objects.filter(slug=request.POST.get("theme"), active=True).first()
     if theme:
         services.set_theme(order, theme)
-    checkout_id = f"dev-{order.public_id.hex[:12]}-{order.payments.count()}"
-    Payment.objects.create(order=order, phone="254700000000", amount_kes=order.price_kes,
-                           checkout_request_id=checkout_id)
+    ref = f"dev-{order.public_id.hex[:12]}-{order.payments.count()}"
+    Payment.objects.create(order=order, provider=settings.PAYMENT_PROVIDER, provider_ref=ref,
+                           phone="254700000000", amount_kes=order.price_kes)
     order.transition(S.PAYMENT_PENDING, note="Simulated payment (development)")
-    billing.handle_callback({"Body": {"stkCallback": {
-        "MerchantRequestID": "dev", "CheckoutRequestID": checkout_id, "ResultCode": 0, "ResultDesc": "Simulated",
-        "CallbackMetadata": {"Item": [{"Name": "Amount", "Value": order.price_kes},
-                                      {"Name": "MpesaReceiptNumber", "Value": "DEVPAY"}]},
-    }}})
+    billing.apply_event(settings.PAYMENT_PROVIDER, PaymentEvent(
+        provider_ref=ref, state="paid", amount=Decimal(order.price_kes), receipt="DEVPAY", fee=Decimal("0.01"),
+        raw={"simulated": True}), source="callback")
     return redirect("orders:detail", public_id=public_id)

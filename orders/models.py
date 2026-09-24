@@ -137,10 +137,13 @@ class Order(models.Model):
         return sum((j.cost_kes for j in self.ai_jobs.all()), Decimal("0"))
 
     @property
+    def payment_fees_kes(self):
+        return sum((p.fee_kes for p in self.payments.filter(status="paid")), Decimal("0"))
+
+    @property
     def margin_kes(self):
-        """Price minus AI cost and payment fees (only meaningful for paid orders)."""
-        fees = Decimal(self.price_kes) * Decimal(str(settings.PAYMENT_FEE_RATE))
-        return Decimal(self.price_kes) - self.ai_cost_kes - fees
+        """Price minus AI cost and payment provider fees (only meaningful for paid orders)."""
+        return Decimal(self.price_kes) - self.ai_cost_kes - self.payment_fees_kes
 
     @property
     def is_paid(self):

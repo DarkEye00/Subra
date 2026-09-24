@@ -3,7 +3,8 @@ import json
 
 import pytest
 
-from billing.mpesa import DarajaClient, MpesaError, normalize_phone
+from billing.phone import normalize_phone
+from billing.providers.daraja import DarajaClient, DarajaProvider, MpesaError
 
 
 @pytest.mark.parametrize(
@@ -103,3 +104,11 @@ def test_query_returns_result_code():
     session = FakeSession([TOKEN, FakeResponse(200, {"ResponseCode": "0", "ResultCode": "1032", "ResultDesc": "Request cancelled by user"})])
     result = client(session).query("ws_CO_1")
     assert result["ResultCode"] == "1032" and not result.get("pending")
+
+
+def test_daraja_provider_normalises_callbacks():
+    payload = {"Body": {"stkCallback": {"CheckoutRequestID": "ws_CO_1", "ResultCode": 0, "ResultDesc": "ok",
+                                        "CallbackMetadata": {"Item": [{"Name": "Amount", "Value": 350},
+                                                                      {"Name": "MpesaReceiptNumber", "Value": "R1"}]}}}}
+    event = DarajaProvider(client=None).handle_callback(payload)
+    assert (event.provider_ref, event.state, event.receipt, int(event.amount)) == ("ws_CO_1", "paid", "R1", 350)

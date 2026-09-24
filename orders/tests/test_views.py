@@ -154,3 +154,26 @@ def test_admin_order_list_shows_cost_and_margin(client, done_order):
     client.force_login(admin)
     html = client.get("/admin/orders/order/").content.decode()
     assert "AI cost (KES)" in html and "Margin (KES)" in html and "Board pack.pptx" in html
+
+
+def test_admin_daily_spend_page_shows_the_cap(client, db):
+    from orders import spend
+
+    spend.record_spend(0.5)
+    admin = User.objects.create_superuser("admin2@example.com", "admin-password-7")
+    client.force_login(admin)
+    resp = client.get("/admin/orders/dailyspend/")
+    assert resp.status_code == 200 and "Cap (USD)" in resp.content.decode()
+
+
+def test_admin_margin_subtracts_logged_payment_fees(client, done_order):
+    from decimal import Decimal
+
+    from billing.models import Payment
+
+    Payment.objects.create(order=done_order, provider="intasend", provider_ref="INV-9", phone="254712345678",
+                           amount_kes=200, fee_kes=Decimal("9.00"), status="paid")
+    admin = User.objects.create_superuser("admin3@example.com", "admin-password-7")
+    client.force_login(admin)
+    html = client.get("/admin/orders/order/").content.decode()
+    assert "Payment fees (KES)" in html and "9.00" in html and "191.00" in html

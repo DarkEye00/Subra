@@ -12,8 +12,8 @@ class PriceTierAdmin(admin.ModelAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(admin.ModelAdmin):
-    list_display = ("created_at", "order", "phone", "amount_kes", "status", "mpesa_receipt", "result_code",
-                    "callback_count")
-    list_filter = ("status", "result_code")
-    search_fields = ("phone", "mpesa_receipt", "checkout_request_id", "order__user__email")
+    list_display = ("created_at", "order", "provider", "phone", "amount_kes", "fee_kes", "status",
+                    "provider_receipt", "result_code", "callback_count")
+    list_filter = ("provider", "status", "result_code")
+    search_fields = ("phone", "provider_receipt", "provider_ref", "reference", "order__user__email")
     readonly_fields = [f.name for f in Payment._meta.fields]

@@ -4,5 +4,5 @@ from . import views
 
 app_name = "billing"
 urlpatterns = [
-    path("mpesa/callback/<str:secret>/", views.mpesa_callback, name="mpesa_callback"),
+    path("webhooks/intasend/", views.intasend_webhook, name="intasend_webhook"),
 ]

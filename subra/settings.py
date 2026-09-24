@@ -177,7 +177,7 @@ AI_PRICING = PRICING
 AI_DAILY_CAP_USD = float(env("AI_DAILY_CAP_USD", "10"))
 USD_KES_RATE = float(env("USD_KES_RATE", "129.20"))
 CARD_FX_MARKUP = float(env("CARD_FX_MARKUP", "0.03"))
-PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.02"))
+PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.045"))  # estimate when the provider reports no fee
 FILE_RETENTION_DAYS = int(env("FILE_RETENTION_DAYS", "7"))
 # Privacy and terms pages show a "draft" banner until Joe has reviewed them (build plan, section 10).
 LEGAL_PAGES_REVIEWED = env_bool("LEGAL_PAGES_REVIEWED", False)
@@ -187,16 +187,12 @@ MAX_SLIDES = 50
 UPLOAD_RATE_LIMIT = (10, 3600)  # uploads per hour, per user and per IP
 PAYMENT_RATE_LIMIT = (5, 600)  # payment attempts per 10 minutes, per user and per IP
 
-MPESA_ENV = env("MPESA_ENV", "sandbox")
-MPESA_CONSUMER_KEY = env("MPESA_CONSUMER_KEY", "")
-MPESA_CONSUMER_SECRET = env("MPESA_CONSUMER_SECRET", "")
-MPESA_SHORTCODE = env("MPESA_SHORTCODE", "")
-MPESA_PASSKEY = env("MPESA_PASSKEY", "")
-MPESA_CALLBACK_SECRET = env("MPESA_CALLBACK_SECRET", "")
-# Daraja needs a public HTTPS URL; by default it's derived from SITE_URL and the secret.
-MPESA_CALLBACK_URL = env("MPESA_CALLBACK_URL", f"{SITE_URL}/billing/mpesa/callback/{MPESA_CALLBACK_SECRET}/")
-MPESA_TRANSACTION_TYPE = env("MPESA_TRANSACTION_TYPE", "CustomerPayBillOnline")  # or CustomerBuyGoodsOnline
-MPESA_PARTY_B = env("MPESA_PARTY_B", "")  # till number for Buy Goods; defaults to the shortcode
+# Payments (Amendment 1A): IntaSend at launch; Daraja is a future provider.
+PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", "intasend")
+INTASEND_ENV = env("INTASEND_ENV", "sandbox")  # sandbox | live
+INTASEND_PUBLISHABLE_KEY = env("INTASEND_PUBLISHABLE_KEY", "")
+INTASEND_SECRET_KEY = env("INTASEND_SECRET_KEY", "")
+INTASEND_WEBHOOK_SECRET = env("INTASEND_WEBHOOK_SECRET", "")  # the "challenge" set in the IntaSend dashboard
 
 # --- security ---------------------------------------------------------------
 

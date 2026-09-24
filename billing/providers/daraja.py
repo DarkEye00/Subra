@@ -1,14 +1,18 @@
-"""Safaricom Daraja client: OAuth token, STK Push, and STK Push status query."""
+"""Safaricom Daraja (future provider): OAuth token, STK Push, and STK Push status query.
+
+Not used at launch (IntaSend is, see Amendment 1A). Kept as a working provider for
+when SUBRA has its own paybill or till; construct it with explicit credentials.
+"""
 
 import base64
 import logging
-import re
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import requests
-from django.conf import settings
+
+from . import InitResult, PaymentEvent, ProviderError
 
 log = logging.getLogger(__name__)
 
@@ -17,27 +21,8 @@ NAIROBI = ZoneInfo("Africa/Nairobi")
 PENDING_ERROR_CODE = "500.001.1001"  # "The transaction is being processed"
 
 
-class MpesaError(Exception):
+class MpesaError(ProviderError):
     pass
-
-
-def normalize_phone(raw):
-    """Return a Safaricom mobile number as 2547XXXXXXXX or 2541XXXXXXXX, or raise ValueError."""
-    raw = (raw or "").strip()
-    if not re.fullmatch(r"\+?[\d\s]+", raw):
-        raise ValueError("Enter a phone number like 0712 345 678")
-    digits = re.sub(r"\D", "", raw)
-    if len(digits) == 12 and digits.startswith("254"):
-        number = digits
-    elif len(digits) == 10 and digits.startswith("0"):
-        number = "254" + digits[1:]
-    elif len(digits) == 9:
-        number = "254" + digits
-    else:
-        raise ValueError("Enter a phone number like 0712 345 678")
-    if number[3] not in "71":
-        raise ValueError("Enter a Safaricom M-Pesa number starting 07 or 01")
-    return number
 
 
 class DarajaClient:
@@ -57,19 +42,6 @@ class DarajaClient:
         self.session = session or requests.Session()
         self.token_cache = token_cache if token_cache is not None else _TOKEN_CACHE
         self.timeout = timeout
-
-    @classmethod
-    def from_settings(cls):
-        return cls(
-            env=settings.MPESA_ENV,
-            consumer_key=settings.MPESA_CONSUMER_KEY,
-            consumer_secret=settings.MPESA_CONSUMER_SECRET,
-            shortcode=settings.MPESA_SHORTCODE,
-            passkey=settings.MPESA_PASSKEY,
-            callback_url=settings.MPESA_CALLBACK_URL,
-            transaction_type=settings.MPESA_TRANSACTION_TYPE,
-            party_b=settings.MPESA_PARTY_B,
-        )
 
     # --- auth -------------------------------------------------------------
 
@@ -156,3 +128,47 @@ def _json(resp):
         return resp.json()
     except ValueError:
         return {}
+
+
+class DarajaProvider:
+    """PaymentProvider implementation on top of DarajaClient."""
+
+    name = "daraja"
+
+    def __init__(self, client):
+        self.client = client
+
+    def initiate(self, order, phone):
+        reference = f"SUBRA{order.pk}"
+        data = self.client.stk_push(phone, order.price_kes, reference=reference, description="Deck polish")
+        return InitResult(provider_ref=data["CheckoutRequestID"], reference=reference, raw=data)
+
+    def handle_callback(self, payload):
+        # Daraja doesn't sign callbacks: protect the callback URL with a secret path segment.
+        stk = payload["Body"]["stkCallback"]
+        code = str(stk.get("ResultCode"))
+        items = {i.get("Name"): i.get("Value") for i in stk.get("CallbackMetadata", {}).get("Item", [])}
+        amount = items.get("Amount")
+        return PaymentEvent(
+            provider_ref=stk["CheckoutRequestID"],
+            state="paid" if code == "0" else "failed",
+            amount=None if amount is None else _dec(amount),
+            receipt=str(items.get("MpesaReceiptNumber") or ""),
+            code=code,
+            reason=stk.get("ResultDesc", ""),
+            raw=payload,
+        )
+
+    def check_status(self, ref):
+        result = self.client.query(ref)
+        if result.get("pending"):
+            return PaymentEvent(provider_ref=ref, state="pending", raw=result)
+        code = result["ResultCode"]
+        return PaymentEvent(provider_ref=ref, state="paid" if code == "0" else "failed", code=code,
+                            reason=result.get("ResultDesc", ""), raw=result)
+
+
+def _dec(value):
+    from decimal import Decimal
+
+    return Decimal(str(value))

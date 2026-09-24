@@ -34,21 +34,27 @@ class PriceTier(models.Model):
 
 
 class Payment(models.Model):
+    """One payment attempt through a provider (IntaSend at launch). Provider-neutral fields."""
+
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         PAID = "paid", "Paid"
         FAILED = "failed", "Failed"
 
     order = models.ForeignKey("orders.Order", on_delete=models.PROTECT, related_name="payments")
+    provider = models.CharField(max_length=20, default="intasend")
+    provider_ref = models.CharField(max_length=64, null=True, blank=True, help_text="The provider's payment ID")
+    reference = models.CharField(max_length=64, blank=True, help_text="Our reference sent to the provider")
+    provider_receipt = models.CharField(max_length=64, blank=True, help_text="M-Pesa receipt number")
     phone = models.CharField(max_length=12)
     amount_kes = models.PositiveIntegerField()
-    merchant_request_id = models.CharField(max_length=64, blank=True)
-    checkout_request_id = models.CharField(max_length=64, unique=True, null=True, blank=True)
-    mpesa_receipt = models.CharField(max_length=32, blank=True)
+    fee_kes = models.DecimalField("fee (KES)", max_digits=10, decimal_places=2, default=0)
+    fee_estimated = models.BooleanField(default=False, help_text="The provider didn't report its fee; estimated")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
-    result_code = models.CharField(max_length=16, blank=True)
+    result_code = models.CharField(max_length=32, blank=True)
     result_desc = models.CharField(max_length=255, blank=True)
-    raw_callback = models.JSONField(null=True, blank=True)
+    raw_init = models.JSONField(null=True, blank=True)
+    raw_callbacks = models.JSONField(default=list, blank=True)
     callback_count = models.PositiveIntegerField(default=0)
     status_checks = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -56,6 +62,7 @@ class Payment(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=["provider", "provider_ref"], name="unique_provider_ref")]
 
     def __str__(self):
         return f"KES {self.amount_kes} from {self.phone} ({self.status})"

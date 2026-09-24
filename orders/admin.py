@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.contrib import admin, messages
-from django.db.models import DecimalField, Sum, Value
+from django.db.models import DecimalField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 
 from billing.models import Payment
@@ -25,7 +25,8 @@ class PaymentInline(admin.TabularInline):
     model = Payment
     extra = 0
     can_delete = False
-    fields = ("created_at", "phone", "amount_kes", "status", "mpesa_receipt", "result_code", "result_desc")
+    fields = ("created_at", "provider", "phone", "amount_kes", "fee_kes", "status", "provider_receipt", "result_code",
+              "result_desc")
     readonly_fields = fields
 
 
@@ -39,27 +40,35 @@ class OrderEventInline(admin.TabularInline):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("original_name", "user", "status", "slide_count", "price_kes", "ai_cost", "margin",
-                    "theme", "created_at")
+    list_display = ("original_name", "user", "status", "slide_count", "price_kes", "ai_cost", "payment_fees",
+                    "margin", "theme", "created_at")
     list_filter = ("status", "product_type", "theme", "rerun_used", "waiting_for_capacity")
-    search_fields = ("original_name", "user__email", "public_id", "payments__mpesa_receipt", "payments__phone")
+    search_fields = ("original_name", "user__email", "public_id", "payments__provider_receipt", "payments__phone")
     readonly_fields = ("public_id", "user", "product_type", "original_name", "slide_count", "tier", "price_kes",
                        "status", "original_file", "result_file", "preview_images", "overflow_slides", "rerun_used",
                        "waiting_for_capacity", "failure_reason", "created_at", "updated_at", "expires_at",
-                       "files_deleted_at", "ai_cost", "margin")
+                       "files_deleted_at", "ai_cost", "payment_fees", "margin")
     fields = readonly_fields + ("theme",)
     inlines = [PaymentInline, AIJobInline, OrderEventInline]
     actions = ["mark_refunded"]
     date_hierarchy = "created_at"
 
     def get_queryset(self, request):
+        paid_fees = Sum("payments__fee_kes", filter=Q(payments__status="paid"))
         return super().get_queryset(request).select_related("user", "theme").annotate(
-            _ai_cost_kes=Coalesce(Sum("ai_jobs__cost_kes"), ZERO)
+            _ai_cost_kes=Coalesce(Subquery(
+                AIJob.objects.filter(order=OuterRef("pk")).values("order").annotate(t=Sum("cost_kes")).values("t")
+            ), ZERO),
+            _fees_kes=Coalesce(paid_fees, ZERO),
         )
 
     @admin.display(description="AI cost (KES)", ordering="_ai_cost_kes")
     def ai_cost(self, obj):
         return f"{getattr(obj, '_ai_cost_kes', obj.ai_cost_kes):.2f}"
+
+    @admin.display(description="Payment fees (KES)", ordering="_fees_kes")
+    def payment_fees(self, obj):
+        return f"{getattr(obj, '_fees_kes', obj.payment_fees_kes):.2f}"
 
     @admin.display(description="Margin (KES)")
     def margin(self, obj):
@@ -67,7 +76,7 @@ class OrderAdmin(admin.ModelAdmin):
                           Order.Status.PAYMENT_FAILED, Order.Status.REFUNDED):
             return "-"
         cost = getattr(obj, "_ai_cost_kes", obj.ai_cost_kes)
-        fees = Decimal(obj.price_kes) * Decimal(str(settings.PAYMENT_FEE_RATE))
+        fees = getattr(obj, "_fees_kes", obj.payment_fees_kes)
         return f"{Decimal(obj.price_kes) - cost - fees:.2f}"
 
     @admin.action(description="Mark refunded (after refunding via M-Pesa)")
