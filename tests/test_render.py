@@ -159,6 +159,7 @@ def test_footer_text_is_kept(tmp_path):
 
 def test_long_list_of_short_lines_flows_into_two_columns(tmp_path):
     prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[0]).shapes.title.text = "Cover"
     s = prs.slides.add_slide(prs.slide_layouts[1])
     s.shapes.title.text = "Operations"
     tf = s.placeholders[1].text_frame
@@ -173,7 +174,7 @@ def test_long_list_of_short_lines_flows_into_two_columns(tmp_path):
     prs.save(tmp_path / "d.pptx")
     deck = extract_deck(tmp_path / "d.pptx")
     out, _ = render_to(tmp_path, deck, plan_deck(deck))
-    body_boxes = [sh for sh in Presentation(out).slides[0].shapes
+    body_boxes = [sh for sh in Presentation(out).slides[1].shapes
                   if sh.has_text_frame and sh.text_frame.text.startswith("Group")]
     assert len(body_boxes) == 2
     assert verify(deck, extract_deck(out)).passed
