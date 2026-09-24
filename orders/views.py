@@ -29,6 +29,7 @@ def home(request):
         "tiers": PriceTier.objects.filter(active=True, product_type=ProductType.DECK_POLISH),
         "themes": Theme.objects.filter(active=True),
         "max_mb": settings.MAX_UPLOAD_BYTES // 1024 // 1024,
+        "max_media_mb": settings.MAX_UPLOAD_BYTES_MEDIA // 1024 // 1024,
         "max_slides": settings.MAX_SLIDES,
         "retention_days": settings.FILE_RETENTION_DAYS,
     }

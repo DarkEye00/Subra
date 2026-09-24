@@ -94,3 +94,33 @@ def test_rejects_deck_with_no_slides(tmp_path):
     empty = tmp_path / "empty.pptx"
     Presentation().save(empty)
     assert_rejected(empty, "empty")
+
+
+# --- Amendment 1D: 25 MB normally, 100 MB with video or audio ---------------------
+
+def _video_deck(tmp_path):
+    from lockedbuilder import build_locked_deck
+
+    return build_locked_deck(tmp_path / "video.pptx")
+
+
+def test_default_limits_are_25_and_100_mb():
+    from polisher.validate import MAX_BYTES, MAX_BYTES_MEDIA
+
+    assert (MAX_BYTES, MAX_BYTES_MEDIA) == (25 * 1024 * 1024, 100 * 1024 * 1024)
+
+
+def test_media_deck_may_exceed_the_normal_limit(tmp_path):
+    deck = _video_deck(tmp_path)
+    info = validate_file(deck, max_bytes=1000, max_bytes_media=10_000_000)
+    assert info.has_media
+
+
+def test_media_deck_over_the_media_limit_is_rejected(tmp_path):
+    err = assert_rejected(_video_deck(tmp_path), "too_large", max_bytes=1000, max_bytes_media=2000)
+    assert "video or audio" in err.message
+
+
+def test_deck_without_media_keeps_the_normal_limit(simple):
+    err = assert_rejected(simple, "too_large", max_bytes=1000, max_bytes_media=10_000_000)
+    assert "Compress Pictures" in err.message

@@ -1,8 +1,9 @@
-"""Built-in themes and the base presentation each one renders onto.
+"""Built-in themes (Amendment 1B: a colour scheme, a font pair, and background specs).
 
-Themes are data. ``base_presentation`` starts from python-pptx's default
-template, switches it to 16:9, and rewrites the Office theme's colours and
-fonts so anything the user adds later in PowerPoint matches the design.
+Themes are data, not template files. ``apply_theme`` rewrites a deck's own Office
+theme (colours and fonts) so masters, layouts, kept charts, and anything the user
+adds later in PowerPoint match the design. ``base_presentation`` gives a blank
+16:9 deck in a theme, for future features that start from nothing (doc-to-deck).
 """
 
 import re
@@ -39,6 +40,9 @@ class Theme:
     decor: str  # "circles" | "bands" | "block"
     heading_bold: bool = True
     cover_on_primary: bool = True  # cover slide uses the primary background
+    # Amendment 1E: a theme that replaces backgrounds turns picture backgrounds into
+    # regular pictures (if the planner keeps them) or drops them (logged).
+    replace_backgrounds: bool = True
 
 
 THEMES = {
@@ -125,8 +129,18 @@ def base_presentation(theme):
     prs.slide_width = Inches(SLIDE_W_IN)
     prs.slide_height = Inches(SLIDE_H_IN)
     _widen_master_and_layouts(prs)
-    _patch_theme_part(prs, theme)
+    apply_theme(prs, theme)
     return prs
+
+
+def apply_theme(prs, theme):
+    """Rewrite every master's theme colour and font scheme. Master and layout shapes are untouched."""
+    seen = set()
+    for master in prs.slide_masters:
+        part = master.part.part_related_by(RT.THEME)
+        if id(part) not in seen:
+            seen.add(id(part))
+            _patch_theme_part(part, theme)
 
 
 def _widen_master_and_layouts(prs):
@@ -141,8 +155,7 @@ def _widen_master_and_layouts(prs):
                 ext.set("cx", str(int(int(ext.get("cx")) * factor)))
 
 
-def _patch_theme_part(prs, theme):
-    part = prs.slide_master.part.part_related_by(RT.THEME)
+def _patch_theme_part(part, theme):
     xml = part.blob.decode("utf-8")
     colors = {
         "dk1": theme.text,
@@ -164,10 +177,13 @@ def _patch_theme_part(prs, theme):
     xml = re.sub(r'<a:clrScheme name="[^"]*"', f'<a:clrScheme name="SUBRA {theme.name}"', xml, count=1)
     xml = re.sub(r'<a:fontScheme name="[^"]*"', f'<a:fontScheme name="SUBRA {theme.name}"', xml, count=1)
     xml = re.sub(
-        r'(<a:majorFont><a:latin typeface=")[^"]*(")', rf"\g<1>{theme.heading_font}\g<2>", xml, count=1
+        r'(<a:majorFont>\s*<a:latin typeface=")[^"]*(")', rf"\g<1>{theme.heading_font}\g<2>", xml, count=1
     )
     xml = re.sub(
-        r'(<a:minorFont><a:latin typeface=")[^"]*(")', rf"\g<1>{theme.body_font}\g<2>", xml, count=1
+        r'(<a:minorFont>\s*<a:latin typeface=")[^"]*(")', rf"\g<1>{theme.body_font}\g<2>", xml, count=1
     )
     etree.fromstring(xml.encode("utf-8"))  # fail loudly if the patch broke the XML
-    part._blob = xml.encode("utf-8")
+    if hasattr(part, "_element"):  # theme parts loaded from a file may be XML parts
+        part._element = etree.fromstring(xml.encode("utf-8"))
+    else:
+        part._blob = xml.encode("utf-8")

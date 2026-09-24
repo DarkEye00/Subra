@@ -7,9 +7,10 @@ from pathlib import Path
 from lxml import etree
 
 MAX_BYTES = 25 * 1024 * 1024
+MAX_BYTES_MEDIA = 100 * 1024 * 1024  # decks with video or audio (Amendment 1D)
 MAX_SLIDES = 50
-# Guard against zip bombs: a 25 MB deck should never expand beyond this.
-MAX_UNCOMPRESSED_BYTES = 400 * 1024 * 1024
+# Guard against zip bombs: even a 100 MB media deck should never expand beyond this.
+MAX_UNCOMPRESSED_BYTES = 600 * 1024 * 1024
 MAX_ZIP_ENTRIES = 5000
 
 CFB_MAGIC = bytes.fromhex("D0CF11E0A1B11AE1")
@@ -37,6 +38,32 @@ class ValidationError(Exception):
 class DeckInfo:
     slide_count: int
     size_bytes: int
+    has_media: bool = False
+
+
+def _mb(n):
+    return f"{n / 1024 / 1024:.0f} MB"
+
+
+def _too_large(size, limit, media):
+    if media:
+        return ValidationError(
+            "too_large",
+            f"This file is {size / 1024 / 1024:.1f} MB. Decks with video or audio can be up to {_mb(limit)}. "
+            "Try compressing the media in PowerPoint (File > Info > Compress Media).",
+        )
+    return ValidationError(
+        "too_large",
+        f"This file is {size / 1024 / 1024:.1f} MB. The limit is {_mb(limit)} "
+        "(more for decks with video or audio). Try compressing images in PowerPoint (File > Compress Pictures).",
+    )
+
+
+def _has_media(content_types_xml):
+    root = etree.fromstring(content_types_xml, etree.XMLParser(resolve_entities=False, no_network=True))
+    return any(
+        (el.get("ContentType") or "").startswith(("video/", "audio/")) for el in root
+    )
 
 
 def validate_file(
@@ -44,6 +71,7 @@ def validate_file(
     max_bytes=MAX_BYTES,
     max_slides=MAX_SLIDES,
     max_uncompressed_bytes=MAX_UNCOMPRESSED_BYTES,
+    max_bytes_media=MAX_BYTES_MEDIA,
 ):
     path = Path(path)
     ext = path.suffix.lower()
@@ -55,12 +83,8 @@ def validate_file(
         raise ValidationError("not_pptx")
 
     size = path.stat().st_size
-    if size > max_bytes:
-        raise ValidationError(
-            "too_large",
-            f"This file is {size / 1024 / 1024:.1f} MB. The limit is {max_bytes / 1024 / 1024:.0f} MB. "
-            "Try compressing images in PowerPoint (File > Compress Pictures).",
-        )
+    if size > max(max_bytes, max_bytes_media):
+        raise _too_large(size, max_bytes_media, media=True)
 
     with open(path, "rb") as f:
         head = f.read(8)
@@ -84,7 +108,8 @@ def validate_file(
             names = {i.filename for i in infos}
             if "[Content_Types].xml" not in names:
                 raise ValidationError("not_pptx")
-            content_types = z.read("[Content_Types].xml").decode("utf-8", "replace")
+            content_types_xml = z.read("[Content_Types].xml")
+            content_types = content_types_xml.decode("utf-8", "replace")
             if MACRO_CT in content_types or any(n.lower().endswith("vbaproject.bin") for n in names):
                 raise ValidationError("macro_enabled")
             if PRESENTATION_CT not in content_types or "ppt/presentation.xml" not in names:
@@ -95,8 +120,13 @@ def validate_file(
 
     try:
         root = etree.fromstring(presentation_xml, etree.XMLParser(resolve_entities=False, no_network=True))
+        has_media = _has_media(content_types_xml)
     except etree.XMLSyntaxError:
         raise ValidationError("corrupt")
+    if has_media and size > max_bytes_media:
+        raise _too_large(size, max_bytes_media, media=True)
+    if not has_media and size > max_bytes:
+        raise _too_large(size, max_bytes, media=False)
     slide_count = len(root.xpath("./*[local-name()='sldIdLst']/*[local-name()='sldId']"))
     if slide_count == 0:
         raise ValidationError("empty")
@@ -115,4 +145,4 @@ def validate_file(
     except Exception:
         raise ValidationError("corrupt")
 
-    return DeckInfo(slide_count=slide_count, size_bytes=size)
+    return DeckInfo(slide_count=slide_count, size_bytes=size, has_media=has_media)

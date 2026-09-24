@@ -27,10 +27,12 @@ def plan_deck(deck):
 
 
 def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
-    if not items:
+    if not [i for i in items if i.kind != "background"]:
         return [PlannedSlide(source_slide, "blank", {})]
     texts = [i for i in items if i.kind == "text"]
-    visuals = [i for i in items if i.kind != "text"]
+    # locked objects first, so a split never pushes them off the slide's first part;
+    # picture backgrounds are left out (the theme replaces them)
+    visuals = sorted((i for i in items if i.kind not in ("text", "background")), key=lambda i: i.kind != "locked")
     titles = [t.id for t in texts if t.role == "title"][:3]
     rest = [t for t in texts if t.id not in titles]
     subs = [t.id for t in rest if t.role == "subtitle"]
@@ -41,7 +43,7 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
 
     if visuals:
         kinds = {v.kind for v in visuals}
-        layout = "table" if kinds == {"table"} else "image_text" if kinds == {"image"} else "chart"
+        layout = "table" if kinds == {"table"} else "image_text" if kinds <= {"image", "locked"} else "chart"
         cap = VISUAL_CAPACITY[layout]
         chunks = [visuals[i:i + cap] for i in range(0, len(visuals), cap)]
         body_ids = subs + [t.id for t in body]

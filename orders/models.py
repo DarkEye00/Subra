@@ -11,12 +11,12 @@ from billing.models import PriceTier, ProductType
 
 
 class Theme(models.Model):
-    """A built-in design. ``slug`` must match a theme in polisher/render/themes.py."""
+    """A built-in design. ``slug`` must match a theme in polisher/render/themes.py, where its
+    colour scheme, font pair, and background specs live (Amendment 1B: no template file)."""
 
     name = models.CharField(max_length=60)
     slug = models.SlugField(unique=True)
     description = models.CharField(max_length=200, blank=True)
-    template_file = models.FileField(upload_to="themes/", blank=True, help_text="Reserved for customer brand kits")
     preview_image = models.ImageField(upload_to="themes/", blank=True)
     active = models.BooleanField(default=True)
     sort_order = models.PositiveIntegerField(default=0)
@@ -91,6 +91,7 @@ class Order(models.Model):
     result_file = models.FileField(upload_to=result_upload_path, blank=True)
     preview_images = models.JSONField(default=list, blank=True)  # storage names, in slide order
     overflow_slides = models.JSONField(default=list, blank=True)
+    locked_summary = models.JSONField(default=dict, blank=True)  # locked objects found at upload (Amendment 1C)
     rerun_used = models.BooleanField(default=False)
     waiting_for_capacity = models.BooleanField(default=False)
     failure_reason = models.TextField(blank=True)
@@ -148,6 +149,38 @@ class Order(models.Model):
     @property
     def is_paid(self):
         return self.payments.filter(status="paid").exists()
+
+    LOCKED_WORDS = {
+        "video": "video", "audio": "audio", "ole": "embedded objects", "equation": "equations",
+        "model3d": "3D models", "smartart": "SmartArt diagrams", "ink": "ink drawings",
+        "group": "grouped media", "linked_image": "linked pictures", "other": "special objects",
+    }
+
+    @property
+    def locked_description(self):
+        """e.g. "4 slides contain video and embedded objects." (empty if there are none)"""
+        counts = (self.locked_summary or {}).get("counts") or {}
+        if not counts:
+            return ""
+        words = list(dict.fromkeys(self.LOCKED_WORDS.get(k, "special objects") for k in counts))
+        what = words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+        n = self.locked_summary.get("slides", 0)
+        return f"{n} slide{'s' if n != 1 else ''} contain{'' if n != 1 else 's'} {what}."
+
+    @property
+    def has_linked_objects(self):
+        return bool((self.locked_summary or {}).get("linked"))
+
+    @property
+    def preview_caveats(self):
+        """LibreOffice previews can't show everything exactly (Amendment 1C)."""
+        summary = self.locked_summary or {}
+        out = []
+        if summary.get("equations"):
+            out.append("equations may look slightly different")
+        if summary.get("model3d"):
+            out.append("3D models appear as still images")
+        return out
 
     @property
     def can_rerun(self):

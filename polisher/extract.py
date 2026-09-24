@@ -1,23 +1,33 @@
 """Step 2: turn a .pptx into structured content (see model.py).
 
-Charts are read from the chart XML directly rather than through python-pptx's
-plot classes, so unusual chart types still yield their data.
+Slides are walked as raw XML, because python-pptx doesn't surface every object:
+equations, 3D models and ink sit inside mc:AlternateContent. Anything that must
+not be rebuilt (Amendment 1C: video, audio, OLE, equations, 3D models, SmartArt,
+ink, and groups holding any of them) becomes a LockedItem with SHA-256 hashes of
+all its related parts. Charts are read from the chart XML directly, so unusual
+chart types still yield their data.
 """
 
+import copy
 import hashlib
+import io
 from pathlib import Path
 
 from lxml import etree
+from PIL import Image
 from pptx import Presentation
 from pptx.chart.plot import PlotTypeInspector
-from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
-from pptx.shapes.picture import Picture
+from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 
 from .model import (
+    BackgroundItem,
     ChartItem,
     ChartSeries,
     DeckContent,
     ImageItem,
+    LockedItem,
+    MasterImage,
     Run,
     SlideContent,
     TableCell,
@@ -32,9 +42,18 @@ NS = {
     "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
     "dgm": "http://schemas.openxmlformats.org/drawingml/2006/diagram",
     "mc": "http://schemas.openxmlformats.org/markup-compatibility/2006",
+    "p14": "http://schemas.microsoft.com/office/powerpoint/2010/main",
+    "a14": "http://schemas.microsoft.com/office/drawing/2010/main",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+    "asvg": "http://schemas.microsoft.com/office/drawing/2016/SVG/main",
 }
 A = "{%s}" % NS["a"]
+R_NS = NS["r"]
 DIAGRAM_URI = "http://schemas.openxmlformats.org/drawingml/2006/diagram"
+OLE_URI = "http://schemas.openxmlformats.org/presentationml/2006/ole"
+MODEL3D_URI = "http://schemas.microsoft.com/office/drawing/2017/model3d"
+TABLE_URI = "http://schemas.openxmlformats.org/drawingml/2006/table"
+CHART_URI = "http://schemas.openxmlformats.org/drawingml/2006/chart"
 
 # Chart types python-pptx can build natively from data.
 NATIVE_CHART_TYPES = {
@@ -56,6 +75,19 @@ BULLETED_TYPES = {PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.VER
 FOOTER_TYPES = {PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE}
 SKIP_TYPES = {PP_PLACEHOLDER.SLIDE_NUMBER, PP_PLACEHOLDER.HEADER}
 
+# Relationships we never follow when hashing an object's parts (structure, not content).
+STRUCTURAL_RELS = {RT.SLIDE_LAYOUT, RT.SLIDE_MASTER, RT.NOTES_SLIDE, RT.THEME, RT.SLIDE, RT.HYPERLINK,
+                   RT.NOTES_MASTER, RT.HANDOUT_MASTER}
+# External targets of these relationship types make an object "linked".
+LINKED_RELS = {RT.OLE_OBJECT, RT.VIDEO, RT.AUDIO, RT.MEDIA, RT.IMAGE, RT.PACKAGE}
+
+MEDIA_XPATH = ".//a:videoFile | .//a:audioFile | .//a:quickTimeFile | .//p14:media"
+MATH_XPATH = ".//a14:m | .//m:oMath | .//m:oMathPara"
+LOCKED_XPATH = " | ".join([
+    ".//mc:AlternateContent", ".//p:contentPart", MEDIA_XPATH, MATH_XPATH,
+    f".//a:graphicData[@uri='{OLE_URI}' or @uri='{DIAGRAM_URI}' or @uri='{MODEL3D_URI}']",
+])
+
 DEFAULT_FONT_PT = 18.0
 
 
@@ -64,14 +96,20 @@ def _xp(el, expr):
     return etree._Element.xpath(el, expr, namespaces=NS)
 
 
+def _local(el):
+    return etree.QName(el).localname if isinstance(el.tag, str) else ""
+
+
+def _sha256(blob):
+    return hashlib.sha256(blob).hexdigest()
+
+
 def extract_deck(path):
     prs = Presentation(str(Path(path)))
     W, H = prs.slide_width, prs.slide_height
-    unsupported = []
-    slides = []
-    for n, slide in enumerate(prs.slides, start=1):
-        slides.append(_extract_slide(n, slide, W, H, unsupported))
-    return DeckContent(slides=slides, slide_width=W, slide_height=H, unsupported=unsupported)
+    slides = [_extract_slide(n, slide, W, H) for n, slide in enumerate(prs.slides, start=1)]
+    return DeckContent(slides=slides, slide_width=W, slide_height=H, unsupported=[],
+                       master_images=master_images(prs))
 
 
 # --- slide walking ----------------------------------------------------------
@@ -80,24 +118,29 @@ class _Entry:
     """One content-bearing shape found on the slide, before IDs are assigned."""
 
     def __init__(self, kind, pos, **kw):
-        self.kind = kind  # text | table | chart | image
+        self.kind = kind  # text | table | chart | image | locked
         self.pos = pos  # (x, y, w, h) in slide EMU
         self.__dict__.update(kw)
 
 
-def _extract_slide(n, slide, W, H, unsupported):
-    entries = []
-    problems = []
-    _walk(slide.shapes, _identity, slide.part, entries, problems)
-    _find_alternate_content(slide.shapes._spTree, problems)
-    for p in dict.fromkeys(problems):
-        unsupported.append(f"Slide {n}: {p}")
+def _proxies(shapes, out=None):
+    """Map each XML shape element to its python-pptx proxy (recursing into groups)."""
+    out = {} if out is None else out
+    for shape in shapes:
+        out[shape._element] = shape
+        if shape._element.tag.endswith("}grpSp"):
+            _proxies(shape.shapes, out)
+    return out
 
+
+def _extract_slide(n, slide, W, H):
+    entries = []
+    _walk(slide.shapes._spTree, _identity, slide.part, _proxies(slide.shapes), entries)
     _detect_title(entries, H)
     entries = _reading_order(entries, H)
 
     sc = SlideContent(number=n, hidden=slide._element.get("show") in ("0", "false"))
-    counters = {"t": 0, "tb": 0, "c": 0, "i": 0, "b": 0}
+    counters = {"t": 0, "tb": 0, "c": 0, "i": 0, "b": 0, "l": 0, "bg": 0}
 
     def next_id(kind):
         counters[kind] += 1
@@ -109,21 +152,20 @@ def _extract_slide(n, slide, W, H, unsupported):
             box = next_id("b")
             sc.box_pos[box] = pos
             for para in e.paragraphs:
-                item = TextItem(id=next_id("t"), slide=n, role=e.role, box=box, **para)
+                item = TextItem(id=next_id("t"), slide=n, role=e.role, box=box, shape_id=e.shape_id, **para)
                 sc.texts.append(item)
                 sc.order.append(item.id)
-        elif e.kind == "table":
-            item = e.build(next_id("tb"), n, pos)
-            sc.tables.append(item)
-            sc.order.append(item.id)
-        elif e.kind == "chart":
-            item = e.build(next_id("c"), n, pos)
-            sc.charts.append(item)
-            sc.order.append(item.id)
-        elif e.kind == "image":
-            item = e.build(next_id("i"), n, pos)
-            sc.images.append(item)
-            sc.order.append(item.id)
+            continue
+        kind = {"table": "tb", "chart": "c", "image": "i", "locked": "l"}[e.kind]
+        item = e.build(next_id(kind), n, pos)
+        {"table": sc.tables, "chart": sc.charts, "image": sc.images, "locked": sc.locked}[e.kind].append(item)
+        sc.order.append(item.id)
+
+    bg = _background(slide)
+    if bg is not None:
+        item = BackgroundItem(id=next_id("bg"), slide=n, sha256=bg[0], aspect=bg[1])
+        sc.backgrounds.append(item)
+        sc.order.append(item.id)
 
     if slide.has_notes_slide and slide.notes_slide.notes_text_frame is not None:
         sc.notes = slide.notes_slide.notes_text_frame.text
@@ -134,8 +176,8 @@ def _identity(x, y, w, h):
     return x, y, w, h
 
 
-def _group_transform(grp, outer):
-    xfrm = grp._element.grpSpPr.find(A + "xfrm")
+def _group_transform(grp_el, outer):
+    xfrm = grp_el.find(f"{{{NS['p']}}}grpSpPr/{A}xfrm")
     if xfrm is None or xfrm.find(A + "chExt") is None:
         return outer
     off, ext = xfrm.find(A + "off"), xfrm.find(A + "ext")
@@ -152,69 +194,221 @@ def _group_transform(grp, outer):
     return transform
 
 
-def _shape_pos(shape, transform):
-    vals = [getattr(shape, a, None) or 0 for a in ("left", "top", "width", "height")]
-    return transform(*vals)
+def top_shapes(el):
+    """The shape elements that carry an object's position: both branches of mc:AlternateContent."""
+    if _local(el) == "AlternateContent":
+        return [c for branch in el for c in branch if isinstance(c.tag, str)]
+    return [el]
 
 
-def _walk(shapes, transform, part, entries, problems):
-    for shape in shapes:
-        try:
-            st = shape.shape_type
-        except NotImplementedError:  # python-pptx can't classify some autoshapes
-            st = None
-        if st == MSO_SHAPE_TYPE.GROUP:
-            _walk(shape.shapes, _group_transform(shape, transform), part, entries, problems)
-            continue
-        if st == MSO_SHAPE_TYPE.MEDIA:
-            problems.append("video or audio")
-            continue
-        if st in (MSO_SHAPE_TYPE.EMBEDDED_OLE_OBJECT, MSO_SHAPE_TYPE.LINKED_OLE_OBJECT):
-            problems.append("embedded object (for example an Excel sheet)")
-            continue
-        pos = _shape_pos(shape, transform)
+def shape_xfrm(shape_el):
+    """The xfrm element holding a shape's own off/ext (None if it inherits from a layout)."""
+    tag = _local(shape_el)
+    if tag == "grpSp":
+        return shape_el.find(f"{{{NS['p']}}}grpSpPr/{A}xfrm")
+    if tag == "graphicFrame":
+        return shape_el.find(f"{{{NS['p']}}}xfrm")
+    if tag == "contentPart":
+        return shape_el.find(f"{{{NS['p14']}}}xfrm")
+    return shape_el.find(f"{{{NS['p']}}}spPr/{A}xfrm")
 
-        if isinstance(shape, Picture):
-            try:
-                image = shape.image
-            except Exception:
-                problems.append("linked image (not embedded in the file)")
-                continue
-            entries.append(_Entry("image", pos, build=_image_builder(shape, image)))
-            continue
 
-        if getattr(shape, "has_table", False) and shape.has_table:
-            entries.append(_Entry("table", pos, build=_table_builder(shape.table)))
+def _xfrm_box(xfrm):
+    if xfrm is None or xfrm.find(A + "off") is None or xfrm.find(A + "ext") is None:
+        return None
+    off, ext = xfrm.find(A + "off"), xfrm.find(A + "ext")
+    return int(off.get("x", 0)), int(off.get("y", 0)), int(ext.get("cx", 0)), int(ext.get("cy", 0))
+
+
+def _element_pos(el, transform, proxy=None):
+    for shape_el in top_shapes(el):
+        box = _xfrm_box(shape_xfrm(shape_el))
+        if box:
+            return transform(*box)
+    if proxy is not None:  # e.g. a placeholder inheriting its position from the layout
+        return transform(*[getattr(proxy, a, None) or 0 for a in ("left", "top", "width", "height")])
+    return transform(0, 0, 0, 0)
+
+
+def _walk(container, transform, part, proxies, entries):
+    for el in container:
+        tag = _local(el)
+        if tag in ("", "nvGrpSpPr", "grpSpPr", "extLst"):
             continue
-        if getattr(shape, "has_chart", False) and shape.has_chart:
-            entries.append(_Entry("chart", pos, build=_chart_builder(shape.chart)))
-            continue
-        if shape._element.tag.endswith("}graphicFrame"):
-            uri = shape._element.xpath(".//a:graphicData/@uri")
-            if uri and uri[0] == DIAGRAM_URI:
-                paras = _smartart_paragraphs_for(shape, part)
-                if paras:
-                    entries.append(_Entry("text", pos, role="body", paragraphs=paras, font_pt=None, placeholder=False))
+        proxy = proxies.get(el)
+        pos = _element_pos(el, transform, proxy)
+
+        if tag in ("AlternateContent", "contentPart"):
+            entries.append(_locked_entry(el, classify_locked(el), pos, part))
+        elif tag == "grpSp":
+            if _xp(el, LOCKED_XPATH):
+                entries.append(_locked_entry(el, "group", pos, part))
+            else:  # a plain group is dissolved: its text, tables, charts and pictures become items
+                _walk(el, _group_transform(el, transform), part, proxies, entries)
+        elif tag == "pic":
+            if _xp(el, MEDIA_XPATH):
+                entries.append(_locked_entry(el, classify_locked(el), pos, part))
+            elif not _xp(el, "./p:blipFill/a:blip/@r:embed"):
+                entries.append(_locked_entry(el, "linked_image", pos, part))
             else:
-                problems.append("unsupported object")
-            continue
-
-        if getattr(shape, "has_text_frame", False) and shape.has_text_frame:
-            role, bulleted, skip = _placeholder_role(shape)
+                entries.append(_Entry("image", pos, build=_image_builder(proxy, el, part)))
+        elif tag == "graphicFrame":
+            uri = (_xp(el, "./a:graphic/a:graphicData/@uri") or [""])[0]
+            if uri == TABLE_URI and proxy is not None:
+                entries.append(_Entry("table", pos, build=_with_shape_id(_table_builder(proxy.table), el)))
+            elif uri == CHART_URI and proxy is not None:
+                entries.append(_Entry("chart", pos, build=_with_shape_id(_chart_builder(proxy.chart), el)))
+            else:
+                entries.append(_locked_entry(el, classify_locked(el), pos, part))
+        elif tag == "sp":
+            if _xp(el, MATH_XPATH):
+                entries.append(_locked_entry(el, "equation", pos, part))
+                continue
+            if proxy is None or not proxy.has_text_frame:
+                continue
+            role, bulleted, skip = _placeholder_role(proxy)
             if skip:
                 continue
-            paras = _paragraphs(shape.text_frame, part, bulleted, problems)
+            paras = _paragraphs(proxy.text_frame, part, bulleted)
             if paras:
-                entries.append(
-                    _Entry("text", pos, role=role, paragraphs=paras,
-                           font_pt=_max_font_pt(shape.text_frame), placeholder=shape.is_placeholder)
-                )
+                entries.append(_Entry("text", pos, role=role, paragraphs=paras, shape_id=shape_id_of(el),
+                                      font_pt=_max_font_pt(proxy.text_frame), placeholder=proxy.is_placeholder))
+        # connectors and decorative shapes without text carry no content
 
 
-def _find_alternate_content(sp_tree, problems):
-    # python-pptx skips shapes wrapped in mc:AlternateContent (3D models, ink, zoom, some equations)
-    if _xp(sp_tree, ".//mc:AlternateContent"):
-        problems.append("special object (equation, 3D model, ink or zoom)")
+def _with_shape_id(builder, el):
+    def build(item_id, slide_no, pos):
+        item = builder(item_id, slide_no, pos)
+        item.shape_id = shape_id_of(el)
+        return item
+
+    return build
+
+
+# --- locked objects -----------------------------------------------------------
+
+def classify_locked(el):
+    if _xp(el, MATH_XPATH):
+        return "equation"
+    if _xp(el, f".//a:graphicData[@uri='{MODEL3D_URI}']"):
+        return "model3d"
+    if _local(el) == "contentPart" or _xp(el, ".//p:contentPart"):
+        return "ink"
+    if _xp(el, f".//a:graphicData[@uri='{OLE_URI}']"):
+        return "ole"
+    if _xp(el, f".//a:graphicData[@uri='{DIAGRAM_URI}']"):
+        return "smartart"
+    if _xp(el, ".//a:audioFile"):
+        return "audio"
+    if _xp(el, MEDIA_XPATH):
+        return "video"
+    return "other"
+
+
+def shape_id_of(el):
+    ids = etree._Element.xpath(el, ".//*[local-name()='cNvPr']/@id")
+    return int(ids[0]) if ids else 0
+
+
+def related_parts(el, part):
+    """(sorted SHA-256 of every part the element depends on, external link targets)."""
+    hashes, links, seen = set(), [], set()
+
+    def visit(target):
+        if id(target) in seen:
+            return
+        seen.add(id(target))
+        hashes.add(_sha256(target.blob))
+        for rel in target.rels.values():
+            if not rel.is_external and rel.reltype not in STRUCTURAL_RELS:
+                visit(rel.target_part)
+
+    for node in el.iter():
+        if not isinstance(node.tag, str):
+            continue
+        for name, value in node.attrib.items():
+            if not name.startswith(f"{{{R_NS}}}") or not value or value not in part.rels:
+                continue
+            rel = part.rels[value]
+            if rel.reltype in STRUCTURAL_RELS:
+                continue
+            if rel.is_external:
+                if rel.reltype in LINKED_RELS and rel.target_ref not in links:
+                    links.append(rel.target_ref)
+            else:
+                visit(rel.target_part)
+    return sorted(hashes), links
+
+
+def xml_signature(el):
+    """SHA-256 of the element with positions and relationship IDs blanked (they may legitimately change)."""
+    clone = copy.deepcopy(el)
+    for node in clone.iter():
+        if not isinstance(node.tag, str):
+            continue
+        if _local(node) in ("off", "ext", "chOff", "chExt"):
+            for attr in ("x", "y", "cx", "cy"):
+                node.attrib.pop(attr, None)
+        for name in list(node.attrib):
+            if name.startswith(f"{{{R_NS}}}"):
+                node.set(name, "")
+    return _sha256(etree.tostring(clone, method="c14n"))
+
+
+def _locked_entry(el, lock_type, pos, part):
+    hashes, links = related_parts(el, part)
+    _, _, w, h = pos
+    names = etree._Element.xpath(el, ".//*[local-name()='cNvPr']/@name")
+
+    def build(item_id, slide_no, frac_pos):
+        return LockedItem(
+            id=item_id, slide=slide_no, lock_type=lock_type, shape_id=shape_id_of(el), pos=frac_pos,
+            aspect=round(w / h, 4) if w and h else 1.0, part_hashes=hashes, links=links,
+            equations=len(_xp(el, ".//m:oMath")), has_media=bool(_xp(el, MEDIA_XPATH)),
+            xml_sig=xml_signature(el), name=names[0] if names else "",
+        )
+
+    return _Entry("locked", pos, build=build)
+
+
+# --- backgrounds and master/layout images -----------------------------------------
+
+def _image_size(blob):
+    try:
+        return Image.open(io.BytesIO(blob)).size
+    except Exception:
+        return (0, 0)
+
+
+def _background(slide):
+    rid = _xp(slide._element, "./p:cSld/p:bg/p:bgPr/a:blipFill/a:blip/@r:embed")
+    if not rid or rid[0] not in slide.part.rels:
+        return None
+    blob = slide.part.related_part(rid[0]).blob
+    w, h = _image_size(blob)
+    return _sha256(blob), round(w / h, 4) if w and h else 1.0
+
+
+def _container_images(el, part, container):
+    out = []
+    for node in _xp(el, ".//p:pic | ./p:cSld/p:bg"):
+        names = etree._Element.xpath(node, ".//*[local-name()='cNvPr']/@name")
+        for rid in _xp(node, ".//a:blip/@r:embed | .//asvg:svgBlip/@r:embed"):
+            if rid in part.rels and not part.rels[rid].is_external:
+                out.append(MasterImage(container=container, sha256=_sha256(part.related_part(rid).blob),
+                                       name=names[0] if names else "background"))
+    return out
+
+
+def master_images(prs):
+    """Every picture (and picture background) on slide masters and layouts."""
+    out = []
+    for m, master in enumerate(prs.slide_masters, start=1):
+        prefix = "" if m == 1 else f"master{m}-"
+        out += _container_images(master._element, master.part, f"master:{m}")
+        for i, layout in enumerate(master.slide_layouts, start=1):
+            out += _container_images(layout._element, layout.part, f"{prefix}layout:{i}")
+    return out
 
 
 def _placeholder_role(shape):
@@ -290,12 +484,10 @@ def _bullet_of(p_el, bulleted_default):
     return ("char" if bulleted_default else None), None
 
 
-def _paragraphs(text_frame, part, bulleted_default, problems):
+def _paragraphs(text_frame, part, bulleted_default):
     out = []
     for p in text_frame.paragraphs:
         p_el = p._p
-        if _xp(p_el, ".//mc:AlternateContent"):
-            problems.append("special object (equation, 3D model, ink or zoom)")
         runs = _runs_of(p_el, part)
         text = "".join(r.text for r in runs)
         if not text.strip():
@@ -518,7 +710,7 @@ def _chart_builder(chart):
             id=item_id, slide=slide_no, chart_type=chart_type, categories=categories,
             series=series, title=title,
             x_axis_title=axis_titles.get("x"), y_axis_title=axis_titles.get("y"),
-            has_legend=has_legend, rebuild="native" if native else "clone", pos=pos,
+            has_legend=has_legend, rebuild="native" if native else "keep", pos=pos,
             chart_xml=chart_xml, workbook_blob=workbook_blob,
         )
 
@@ -527,86 +719,24 @@ def _chart_builder(chart):
 
 # --- images ---------------------------------------------------------------
 
-def _image_builder(shape, image):
+def _image_builder(shape, el, part):
+    image = shape.image
     blob = image.blob
-    try:
-        px_w, px_h = image.size
-    except Exception:
-        px_w, px_h = 0, 0
+    px_w, px_h = _image_size(blob)
     crop = (shape.crop_left, shape.crop_top, shape.crop_right, shape.crop_bottom)
+    src = el.find(f"{{{NS['p']}}}blipFill/{A}srcRect")
+    crop_raw = {k: int(src.get(k, 0)) if src is not None else 0 for k in ("l", "t", "r", "b")}
     aspect = (shape.width / shape.height) if shape.width and shape.height else (px_w / px_h if px_h else 1.0)
-    descr = shape._element.xpath("./p:nvPicPr/p:cNvPr/@descr")
+    cnv = etree._Element.xpath(el, "./*[local-name()='nvPicPr']/*[local-name()='cNvPr']")[0]
+    svg = _xp(el, "./p:blipFill/a:blip//asvg:svgBlip/@r:embed")
+    svg_sha = _sha256(part.related_part(svg[0]).blob) if svg and svg[0] in part.rels else ""
 
     def build(item_id, slide_no, pos):
         return ImageItem(
-            id=item_id, slide=slide_no, sha1=hashlib.sha1(blob).hexdigest(),
-            content_type=image.content_type, ext=image.ext, px_width=px_w, px_height=px_h,
-            crop=tuple(round(c, 4) for c in crop), display_aspect=round(aspect, 4),
-            alt_text=descr[0] if descr else "", pos=pos, blob=blob,
+            id=item_id, slide=slide_no, sha256=_sha256(blob), content_type=image.content_type, ext=image.ext,
+            px_width=px_w, px_height=px_h, crop=tuple(round(c, 4) for c in crop), crop_raw=crop_raw,
+            display_aspect=round(aspect, 4), alt_text=cnv.get("descr", ""), title=cnv.get("title", ""),
+            svg_sha256=svg_sha, pos=pos, shape_id=shape_id_of(el), blob=blob,
         )
 
     return build
-
-
-# --- SmartArt -------------------------------------------------------------
-
-def _smartart_paragraph_elements(xml_bytes):
-    """[(a:p element, level)] for SmartArt data in logical (tree) order."""
-    root = etree.fromstring(xml_bytes, etree.XMLParser(resolve_entities=False, no_network=True))
-    D = "{%s}" % NS["dgm"]
-    pts = root.findall(f"{D}ptLst/{D}pt")
-    by_id = {pt.get("modelId"): pt for pt in pts}
-    content_ids = [pt.get("modelId") for pt in pts if pt.get("type") in (None, "node", "asst")]
-    doc_ids = [pt.get("modelId") for pt in pts if pt.get("type") == "doc"]
-
-    children = {}
-    for cxn in root.findall(f"{D}cxnLst/{D}cxn"):
-        if cxn.get("type") not in (None, "parOf"):
-            continue
-        children.setdefault(cxn.get("srcId"), []).append((int(cxn.get("srcOrd", "0")), cxn.get("destId")))
-
-    ordered = []
-    seen = set()
-
-    def visit(node_id, level):
-        for _, child in sorted(children.get(node_id, [])):
-            if child in seen or child not in by_id:
-                continue
-            seen.add(child)
-            if child in content_ids:
-                ordered.append((child, level))
-            visit(child, level + 1)
-
-    for d in doc_ids:
-        visit(d, 0)
-    ordered.extend((i, 0) for i in content_ids if i not in seen)
-
-    out = []
-    for model_id, level in ordered:
-        for p in by_id[model_id].findall(f"{D}t/{A}p"):
-            out.append((p, level))
-    return out
-
-
-def parse_smartart_data(xml_bytes):
-    """[(text, level)] for each non-empty SmartArt paragraph."""
-    out = []
-    for p, level in _smartart_paragraph_elements(xml_bytes):
-        text = "".join(_xp(p, ".//a:t/text()"))
-        if text.strip():
-            out.append((text, level))
-    return out
-
-
-def _smartart_paragraphs_for(shape, part):
-    rid = _xp(shape._element, ".//dgm:relIds/@r:dm")
-    if not rid:
-        return []
-    data_part = part.related_part(rid[0])
-    paras = []
-    for p, level in _smartart_paragraph_elements(data_part.blob):
-        runs = _runs_of(p, part)
-        text = "".join(r.text for r in runs)
-        if text.strip():
-            paras.append(dict(text=text, runs=runs, level=level, bullet="char" if level else None, number_type=None))
-    return paras

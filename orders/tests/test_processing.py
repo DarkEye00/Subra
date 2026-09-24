@@ -94,16 +94,25 @@ def test_upload_rejects_decks_over_the_slide_limit(user, tmp_path, settings):
     assert "6 slides" in exc.value.message
 
 
-def test_upload_rejects_unsupported_content_before_payment(user, tmp_path):
-    prs = Presentation()
-    s = prs.slides.add_slide(prs.slide_layouts[6])
-    movie = tmp_path / "clip.mp4"
-    movie.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100)
-    s.shapes.add_movie(str(movie), Inches(1), Inches(1), Inches(4), Inches(3), mime_type="video/mp4")
-    prs.save(tmp_path / "v.pptx")
-    with pytest.raises(services.UploadError) as exc:
-        services.create_order(user, upload(tmp_path / "v.pptx"))
-    assert "video" in exc.value.message
+def test_deck_with_locked_objects_is_quoted_with_a_summary(user, tmp_path):
+    from lockedbuilder import build_locked_deck
+
+    order = services.create_order(user, upload(build_locked_deck(tmp_path / "locked.pptx")))
+    assert order.status == S.QUOTED
+    summary = order.locked_summary
+    assert summary["slides"] == 9 and summary["linked"] == 1 and summary["counts"]["video"] == 1
+    assert order.locked_description.startswith("9 slides contain ")
+    assert "embedded objects" in order.locked_description and "equations" in order.locked_description
+
+
+def test_media_decks_get_the_larger_upload_limit(user, tmp_path, settings):
+    from lockedbuilder import build_locked_deck
+
+    settings.MAX_UPLOAD_BYTES, settings.MAX_UPLOAD_BYTES_MEDIA = 1000, 10_000_000
+    order = services.create_order(user, upload(build_locked_deck(tmp_path / "locked.pptx")))
+    assert order.status == S.QUOTED
+    with pytest.raises(services.UploadError):
+        services.create_order(user, upload(build_rich_deck(tmp_path / "rich.pptx")))
 
 
 # --- processing -------------------------------------------------------------

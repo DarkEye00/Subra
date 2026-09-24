@@ -14,13 +14,20 @@ from polisher.verify import verify
 
 
 @pytest.fixture(scope="module")
-def rich(tmp_path_factory):
-    return extract_deck(build_rich_deck(tmp_path_factory.mktemp("r") / "rich.pptx"))
+def rich_path(tmp_path_factory):
+    return build_rich_deck(tmp_path_factory.mktemp("r") / "rich.pptx")
 
 
-def render_to(tmp_path, deck, plan, theme="navy", name="out.pptx"):
+@pytest.fixture(scope="module")
+def rich(rich_path):
+    deck = extract_deck(rich_path)
+    deck.source = rich_path
+    return deck
+
+
+def render_to(tmp_path, deck, plan, theme="navy", name="out.pptx", source=None):
     out = tmp_path / name
-    report = render(plan, deck, get_theme(theme), out)
+    report = render(plan, deck, get_theme(theme), out, source or deck.source)
     return out, report
 
 
@@ -31,10 +38,10 @@ def test_round_trip_keeps_all_content(tmp_path, rich, theme):
     assert result.passed, result.problems
 
 
-def test_output_is_16_by_9(tmp_path, rich):
+def test_output_keeps_the_original_slide_size(tmp_path, rich, rich_path):
     out, _ = render_to(tmp_path, rich, plan_deck(rich))
-    prs = Presentation(out)
-    assert (prs.slide_width, prs.slide_height) == (Inches(13.333), Inches(7.5))
+    before, after = Presentation(rich_path), Presentation(out)
+    assert (after.slide_width, after.slide_height) == (before.slide_width, before.slide_height)
 
 
 def test_theme_fonts_are_written_into_the_office_theme(tmp_path, rich):
@@ -114,9 +121,9 @@ def test_every_layout_round_trips(tmp_path, rich):
     assert result.passed, result.problems
 
 
-def test_cloned_chart_round_trips(tmp_path, rich):
+def test_kept_chart_round_trips(tmp_path, rich):
     deck = copy.deepcopy(rich)
-    deck.slides[3].charts[0].rebuild = "clone"
+    deck.slides[3].charts[0].rebuild = "keep"
     out, _ = render_to(tmp_path, deck, plan_deck(deck))
     result = verify(deck, extract_deck(out))
     assert result.passed, result.problems
@@ -132,6 +139,7 @@ def test_overflowing_slide_is_flagged(tmp_path):
         tf.add_paragraph().text = "another long paragraph with many words in it " * 3
     prs.save(tmp_path / "big.pptx")
     deck = extract_deck(tmp_path / "big.pptx")
+    deck.source = tmp_path / "big.pptx"
     ids = [t.id for t in deck.slides[0].texts]
     plan = parse_plan({"slides": [{"source_slide": 1, "layout": "bullets",
                                    "slots": {"title": ids[:1], "body": ids[1:]}}]})
@@ -153,6 +161,7 @@ def test_footer_text_is_kept(tmp_path):
     next(p for p in s.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER).text = "Confidential"
     prs.save(tmp_path / "f.pptx")
     deck = extract_deck(tmp_path / "f.pptx")
+    deck.source = tmp_path / "f.pptx"
     out, _ = render_to(tmp_path, deck, plan_deck(deck))
     assert verify(deck, extract_deck(out)).passed
 
@@ -173,6 +182,7 @@ def test_long_list_of_short_lines_flows_into_two_columns(tmp_path):
             p.level = 1
     prs.save(tmp_path / "d.pptx")
     deck = extract_deck(tmp_path / "d.pptx")
+    deck.source = tmp_path / "d.pptx"
     out, _ = render_to(tmp_path, deck, plan_deck(deck))
     body_boxes = [sh for sh in Presentation(out).slides[1].shapes
                   if sh.has_text_frame and sh.text_frame.text.startswith("Group")]

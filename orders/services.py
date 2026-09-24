@@ -32,10 +32,12 @@ def default_theme():
 def create_order(user, uploaded_file, product_type=ProductType.DECK_POLISH):
     """Validate an upload and create a QUOTED order. Nothing is charged or sent to AI here."""
     name = Path(uploaded_file.name).name[:255]
-    if uploaded_file.size > settings.MAX_UPLOAD_BYTES:
+    hard_limit = max(settings.MAX_UPLOAD_BYTES, settings.MAX_UPLOAD_BYTES_MEDIA)
+    if uploaded_file.size > hard_limit:
         raise UploadError(
             f"This file is {uploaded_file.size / 1024 / 1024:.1f} MB. The limit is "
-            f"{settings.MAX_UPLOAD_BYTES // 1024 // 1024} MB."
+            f"{settings.MAX_UPLOAD_BYTES // 1024 // 1024} MB, or {hard_limit // 1024 // 1024} MB for decks "
+            "with video or audio."
         )
     with tempfile.TemporaryDirectory(prefix="subra-upload-") as tmp:
         path = Path(tmp) / ("upload" + Path(name).suffix.lower())
@@ -43,7 +45,8 @@ def create_order(user, uploaded_file, product_type=ProductType.DECK_POLISH):
             for chunk in uploaded_file.chunks():
                 out.write(chunk)
         try:
-            info = validate_file(path, max_bytes=settings.MAX_UPLOAD_BYTES, max_slides=settings.MAX_SLIDES)
+            info = validate_file(path, max_bytes=settings.MAX_UPLOAD_BYTES, max_slides=settings.MAX_SLIDES,
+                                 max_bytes_media=settings.MAX_UPLOAD_BYTES_MEDIA)
             deck = extract_deck(path)
         except ValidationError as e:
             raise UploadError(e.message)
@@ -58,6 +61,7 @@ def create_order(user, uploaded_file, product_type=ProductType.DECK_POLISH):
             order = Order.objects.create(
                 user=user, product_type=product_type, original_name=name, slide_count=info.slide_count,
                 tier=tier, price_kes=tier.price_kes, theme=default_theme(),
+                locked_summary=deck.locked_summary(),
             )
             with open(path, "rb") as f:
                 order.original_file.save("original.pptx", File(f), save=True)

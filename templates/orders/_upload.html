@@ -3,7 +3,7 @@
   {% csrf_token %}
   <label class="block cursor-pointer rounded-xl border-2 border-dashed border-ink/30 bg-white p-6 text-center hover:border-ink focus-within:border-ink">
     <span class="block text-lg font-bold" data-filename>Choose a PowerPoint file</span>
-    <span class="mt-1 block text-sm text-muted">.pptx, up to {{ max_slides }} slides and {{ max_mb }} MB</span>
+    <span class="mt-1 block text-sm text-muted">.pptx, up to {{ max_slides }} slides and {{ max_mb }} MB ({{ max_media_mb }} MB with video)</span>
     <input type="file" name="deck" required class="sr-only"
            accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation"
            onchange="this.form.querySelector('[data-filename]').textContent = this.files[0] ? this.files[0].name : 'Choose a PowerPoint file'">

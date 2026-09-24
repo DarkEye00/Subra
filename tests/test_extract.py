@@ -7,7 +7,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 
 from deckbuilder import build_rich_deck, png_bytes
-from polisher.extract import extract_deck, parse_smartart_data
+from polisher.extract import extract_deck
 
 
 @pytest.fixture(scope="module")
@@ -193,7 +193,7 @@ def test_xy_chart_keeps_x_and_y_values(rich):
 
 def test_image_binary_and_crop(rich):
     (img,) = rich.slides[4].images
-    assert img.sha1 == hashlib.sha1(png_bytes(400, 300)).hexdigest()
+    assert img.sha256 == hashlib.sha256(png_bytes(400, 300)).hexdigest()
     assert img.blob == png_bytes(400, 300)
     assert (img.px_width, img.px_height) == (400, 300)
     assert img.crop == pytest.approx((0.1, 0.0, 0.1, 0.0))
@@ -211,43 +211,3 @@ def test_hidden_slide_is_flagged(rich):
     assert [s.hidden for s in rich.slides] == [False] * 6 + [True]
 
 
-# --- SmartArt and unsupported content -------------------------------------
-
-SMARTART_DATA = b"""<?xml version="1.0" encoding="UTF-8"?>
-<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"
-               xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
-  <dgm:ptLst>
-    <dgm:pt modelId="0" type="doc"><dgm:t><a:p><a:endParaRPr/></a:p></dgm:t></dgm:pt>
-    <dgm:pt modelId="1"><dgm:t><a:p><a:r><a:t>Plan</a:t></a:r></a:p></dgm:t></dgm:pt>
-    <dgm:pt modelId="2"><dgm:t><a:p><a:r><a:t>Budget KES 2m</a:t></a:r></a:p></dgm:t></dgm:pt>
-    <dgm:pt modelId="3"><dgm:t><a:p><a:r><a:t>Execute</a:t></a:r></a:p></dgm:t></dgm:pt>
-    <dgm:pt modelId="9" type="pres"><dgm:t><a:p><a:r><a:t>ignored</a:t></a:r></a:p></dgm:t></dgm:pt>
-    <dgm:pt modelId="7" type="parTrans"/>
-  </dgm:ptLst>
-  <dgm:cxnLst>
-    <dgm:cxn modelId="10" srcId="0" destId="1" srcOrd="0" destOrd="0"/>
-    <dgm:cxn modelId="11" srcId="1" destId="2" srcOrd="0" destOrd="0"/>
-    <dgm:cxn modelId="12" srcId="0" destId="3" srcOrd="1" destOrd="0"/>
-    <dgm:cxn modelId="13" type="presOf" srcId="1" destId="9" srcOrd="0" destOrd="0"/>
-  </dgm:cxnLst>
-</dgm:dataModel>"""
-
-
-def test_smartart_text_and_levels():
-    assert parse_smartart_data(SMARTART_DATA) == [
-        ("Plan", 0),
-        ("Budget KES 2m", 1),
-        ("Execute", 0),
-    ]
-
-
-def test_video_is_reported_as_unsupported(tmp_path):
-    prs = Presentation()
-    s = prs.slides.add_slide(prs.slide_layouts[6])
-    movie = tmp_path / "clip.mp4"
-    movie.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100)
-    s.shapes.add_movie(str(movie), Inches(1), Inches(1), Inches(4), Inches(3), mime_type="video/mp4")
-    prs.save(tmp_path / "d.pptx")
-    deck = extract_deck(tmp_path / "d.pptx")
-    assert deck.unsupported == ["Slide 1: video or audio"]
-    assert deck.slides[0].images == []

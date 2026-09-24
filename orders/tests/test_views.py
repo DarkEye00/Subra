@@ -177,3 +177,33 @@ def test_admin_margin_subtracts_logged_payment_fees(client, done_order):
     client.force_login(admin)
     html = client.get("/admin/orders/order/").content.decode()
     assert "Payment fees (KES)" in html and "9.00" in html and "191.00" in html
+
+
+def test_quote_lists_locked_objects_and_warns_about_links(logged_in, tmp_path):
+    from lockedbuilder import build_locked_deck
+
+    data = build_locked_deck(tmp_path / "locked.pptx").read_bytes()
+    html = logged_in.post(reverse("orders:upload"), {"deck": pptx(data)}, follow=True).content.decode()
+    assert "These are kept exactly as they are, and the slides are restyled around them." in html
+    assert "links to external files that may not open on other computers" in html
+
+
+def test_preview_page_notes_equation_rendering(logged_in, user, tmp_path, monkeypatch):
+    from lockedbuilder import build_locked_deck
+    from orders import processing
+
+    def fake_previews(pptx_path, out_dir, dpi=60):
+        png = Path(out_dir) / "slide-1.png"
+        png.parent.mkdir(parents=True, exist_ok=True)
+        png.write_bytes(b"\x89PNG fake")
+        return [png]
+
+    monkeypatch.setattr(processing, "render_previews", fake_previews)
+    order = services.create_order(user, pptx(build_locked_deck(tmp_path / "locked.pptx").read_bytes()))
+    order.transition(S.PAYMENT_PENDING)
+    order.transition(S.PAID)
+    tasks.process_order(order.pk)
+    order.refresh_from_db()
+    assert order.status == S.DONE, order.failure_reason
+    html = logged_in.get(reverse("orders:detail", args=[order.public_id])).content.decode()
+    assert "equations" in html and "doesn't affect your download" in html

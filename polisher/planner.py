@@ -64,7 +64,10 @@ Code checks these after you answer, and rejects a plan that breaks them.
 3. Slide order stays the same. `source_slide` never decreases from one planned slide to the next, and every source slide in the input appears at least once.
 4. An item may only be placed on a planned slide whose `source_slide` is the slide the item came from.
 5. You may split one overcrowded source slide into several planned slides with the same `source_slide`, as long as every item still appears exactly once. Titles can't be repeated, so only the first part of a split has a title.
-6. Use only the layouts and slots listed below. Text IDs go only in text slots, tables/charts/images only in `visuals`, and stat entries only in `stats`.
+6. Use only the layouts and slots listed below. Text IDs go only in text slots, tables, charts, images and locked objects only in `visuals`, and stat entries only in `stats`.
+7. Locked objects (type "locked": video, audio, embedded or linked files, equations, 3D models, SmartArt, ink, and groups that contain them) are kept exactly as they are. Put each one in a `visuals` slot on the first planned slide for its source slide. You can't remove or split them; the renderer only moves and scales them.
+8. Images can only be placed and scaled. You can't see inside them, so treat them as opaque.
+9. Picture backgrounds (type "background") are replaced by the theme. If one carries content (a photo, map, chart or text), put it in a `visuals` slot and it stays as a normal picture. If it's decorative, leave it out. Backgrounds are the only items you may leave out.
 
 ## What you may change
 
@@ -87,7 +90,7 @@ Each stat entry is {{"ids": [...], "highlight": string or null}}.
 
 - Slide 1 is almost always `title`. A slide that only announces the next part of the deck is a `section`. A closing "Thank you" or "Questions" slide with contact details works well as `title` or `quote`.
 - Default to `bullets` for text. Prefer `two_column` when the original had two text boxes side by side (see `boxes`), or when the text is a comparison (pros and cons, before and after, two options). If a column starts with a short heading paragraph, put it in `left_title`/`right_title`.
-- Tables go in `table`, charts in `chart`, photos in `image_text`. Put a slide's explanatory text in that slide's `body`.
+- Tables go in `table`, charts in `chart`, photos, videos and other locked objects in `image_text` (or `chart` when they sit beside a chart). Put a slide's explanatory text in that slide's `body`.
 - The renderer shrinks text to fit, down to about 12pt, and flows long lists of short lines into two columns by itself. Split a slide when its text is long: more than about 14 lines, more than about 170 words, or several distinct groups of points. Split at a top-level paragraph so sub-points stay with their parent.
 - Keep a paragraph's sub-points (higher `level`) in the same slot as their parent.
 - Slides with no content are not sent to you; ignore them.
@@ -102,6 +105,8 @@ Items:
 - table: {{"id", "type": "table", "rows", "cols", "header": first row, "sample": the next rows (truncated)}}
 - chart: {{"id", "type": "chart", "chart_type", "title", "categories" (may be truncated), "series": names}}
 - image: {{"id", "type": "image", "aspect": width / height, "alt": alt text, "pos": [x, y, w, h]}}
+- locked: {{"id", "type": "locked", "object": "video" | "audio" | "ole" | "equation" | "model3d" | "smartart" | "ink" | "group" | ..., "aspect"}}
+- background: {{"id", "type": "background", "aspect"}}
 
 Positions are fractions of the slide width and height, measured from the top-left corner.
 
@@ -211,6 +216,10 @@ def planner_input(deck):
                     entry["title"] = item.title
                 entry["categories"] = [_cell(c) for c in item.categories[:MAX_CATEGORIES]]
                 entry["series"] = [s_.name for s_ in item.series]
+            elif item.kind == "locked":
+                entry = {"id": item.id, "type": "locked", "object": item.lock_type, "aspect": round(item.aspect, 2)}
+            elif item.kind == "background":
+                entry = {"id": item.id, "type": "background", "aspect": round(item.aspect, 2)}
             else:
                 entry = {"id": item.id, "type": "image", "aspect": round(item.display_aspect, 2)}
                 if item.alt_text:

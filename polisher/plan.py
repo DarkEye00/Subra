@@ -13,7 +13,11 @@ from .layouts import BLANK, LAYOUTS
 from .verify import normalize_text
 
 TEXT_SLOT_PREFERENCE = ["body", "subtitle", "left", "right", "quote", "attribution"]
-VISUAL_LAYOUT_FOR_KIND = {"table": "table", "chart": "chart", "image": "image_text"}
+VISUAL_KINDS = {"table", "chart", "image", "locked", "background"}
+VISUAL_LAYOUT_FOR_KIND = {"table": "table", "chart": "chart", "image": "image_text", "locked": "image_text",
+                          "background": "image_text"}
+# Picture backgrounds are the only optional items: leaving one out means the theme replaces it.
+OPTIONAL_KINDS = {"background"}
 
 
 class PlanFormatError(ValueError):
@@ -124,7 +128,15 @@ def _layout(name):
 def _accepts(slot, item):
     if slot.accepts in ("text", "stat"):
         return item.kind == "text"
-    return item.kind in ("table", "chart", "image")
+    return item.kind in VISUAL_KINDS
+
+
+def _first_parts(plan):
+    """Index of the first planned slide for each source slide."""
+    first = {}
+    for idx, ps in enumerate(plan.slides):
+        first.setdefault(ps.source_slide, idx)
+    return first
 
 
 def _highlight_ok(highlight, item):
@@ -143,9 +155,11 @@ def validate_plan(plan, deck):
     errors = []
     seen = Counter()
     prev_source = 0
+    first_parts = _first_parts(plan)
 
     for idx, ps in enumerate(plan.slides, start=1):
         label = f"Planned slide {idx} (source slide {ps.source_slide})"
+        is_first_part = first_parts.get(ps.source_slide) == idx - 1
         if ps.source_slide not in slide_numbers:
             errors.append(f"{label}: there is no source slide {ps.source_slide}")
         if ps.source_slide < prev_source:
@@ -188,6 +202,11 @@ def validate_plan(plan, deck):
                             f"{label}: '{item_id}' belongs to slide {item.slide}, "
                             f"so it can only go on slides planned from source slide {item.slide}"
                         )
+                    elif item.kind == "locked" and not is_first_part:
+                        errors.append(
+                            f"{label}: '{item_id}' is a locked {item.lock_type}; it must stay on the first slide "
+                            f"planned from source slide {item.slide}"
+                        )
                 if is_stat and entry.highlight is not None and ids and ids[0] in items:
                     if not _highlight_ok(entry.highlight, items[ids[0]]):
                         errors.append(
@@ -199,8 +218,8 @@ def validate_plan(plan, deck):
                 if slot.min_items and len(ps.slots.get(slot.name, [])) < slot.min_items:
                     errors.append(f"{label}: slot '{slot.name}' needs at least {slot.min_items} item(s)")
 
-    for item_id in items:
-        if seen[item_id] == 0:
+    for item_id, item in items.items():
+        if seen[item_id] == 0 and item.kind not in OPTIONAL_KINDS:
             errors.append(f"'{item_id}' is missing from the plan (every content ID must appear exactly once)")
         elif seen[item_id] > 1:
             errors.append(f"'{item_id}' appears more than once (every content ID must appear exactly once)")
@@ -241,8 +260,10 @@ def repair_plan(plan, deck):
 
     # 2. drop invalid entries (unknown, footer, duplicate, wrong slide, wrong kind, bad slot)
     seen = set()
+    first_parts = _first_parts(plan)
     for idx, ps in enumerate(plan.slides, start=1):
         layout = _layout(ps.layout)
+        is_first_part = first_parts.get(ps.source_slide) == idx - 1
         new_slots = {}
         for slot_name, entries in ps.slots.items():
             slot = layout.slot(slot_name)
@@ -262,6 +283,8 @@ def repair_plan(plan, deck):
                         reason = "duplicate"
                     elif item.slide != ps.source_slide:
                         reason = f"belongs to slide {item.slide}"
+                    elif item.kind == "locked" and not is_first_part:
+                        reason = "locked objects stay on the first part of their slide"
                     elif slot is None or not _accepts(slot, item):
                         reason = f"can't go in slot '{slot_name}'"
                     if reason:
@@ -301,9 +324,9 @@ def repair_plan(plan, deck):
         plan.slides[insert_at:insert_at] = new
         repairs.append(f"Added missing source slide {n}")
 
-    # 5. put back missing IDs next to their original neighbours
-    for item_id in items:
-        if item_id not in seen:
+    # 5. put back missing IDs next to their original neighbours (optional items stay out)
+    for item_id, item in items.items():
+        if item_id not in seen and item.kind not in OPTIONAL_KINDS:
             _reinsert(plan, items[item_id], items, order)
             seen.add(item_id)
             repairs.append(f"Re-added missing '{item_id}'")
@@ -322,7 +345,22 @@ def _locate(plan, item_id):
     return None
 
 
+def _place_locked(plan, item):
+    """Locked objects go on the first planned slide of their source, first in line for a visual slot."""
+    ps = next(p for p in plan.slides if p.source_slide == item.slide)
+    if _layout(ps.layout).slot("visuals"):
+        ps.slots.setdefault("visuals", []).insert(0, item.id)
+        return
+    title = ps.slots.get("title", [])
+    texts = [i for i in ps.ids() if i not in title]
+    ps.layout = "image_text"
+    ps.slots = {k: v for k, v in (("title", title), ("visuals", [item.id]), ("body", texts)) if v}
+
+
 def _reinsert(plan, item, items, order):
+    if item.kind == "locked":
+        _place_locked(plan, item)
+        return
     same_slide = sorted((i for i in items.values() if i.slide == item.slide), key=lambda i: order[i.id])
     pos = same_slide.index(item)
     before = [i for i in reversed(same_slide[:pos])]

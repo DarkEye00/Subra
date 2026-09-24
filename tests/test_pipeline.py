@@ -7,7 +7,7 @@ from pptx.util import Inches
 from deckbuilder import build_rich_deck
 from polisher.ai import Usage
 from polisher.heuristic import plan_deck
-from polisher.pipeline import PlannerUnavailable, UnsupportedContentError, polish
+from polisher.pipeline import PlannerUnavailable, polish
 from polisher.planner import HeuristicPlanner, PlanAttempt
 from polisher.render.renderer import render
 from polisher.validate import ValidationError
@@ -78,12 +78,19 @@ def test_three_failures_fail_the_job_without_output(tmp_path, deck_path):
 def test_verification_failure_triggers_a_retry_with_the_problems(tmp_path, deck_path):
     calls = {"n": 0}
 
-    def flaky_render(plan, deck, theme, output):
+    def flaky_render(plan, deck, theme, output, source):
+        report = render(plan, deck, theme, output, source)
         calls["n"] += 1
-        if calls["n"] == 1:  # simulate a renderer bug that loses an image
-            deck = copy.deepcopy(deck)
-            deck.slides[4].images[0].blob = build_png_variant()
-        return render(plan, deck, theme, output)
+        if calls["n"] == 1:  # simulate a renderer bug that swaps an image
+            from pptx import Presentation
+
+            prs = Presentation(output)
+            pic = next(sh for slide in prs.slides for sh in slide.shapes if sh.shape_type == 13)
+            pic.image  # noqa: B018 (make sure it's a picture)
+            rid = pic._element.blipFill.blip.rEmbed
+            pic.part.related_part(rid)._blob = build_png_variant()
+            prs.save(output)
+        return report
 
     planner = ScriptedPlanner(["good", "good"])
     result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=planner, render_fn=flaky_render)
@@ -98,18 +105,13 @@ def build_png_variant():
     return png_bytes(400, 300, color=(0, 0, 255))
 
 
-def test_unsupported_content_is_rejected_before_any_ai_call(tmp_path):
-    prs = Presentation()
-    s = prs.slides.add_slide(prs.slide_layouts[6])
-    movie = tmp_path / "clip.mp4"
-    movie.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 100)
-    s.shapes.add_movie(str(movie), Inches(1), Inches(1), Inches(4), Inches(3), mime_type="video/mp4")
-    prs.save(tmp_path / "v.pptx")
-    planner = ScriptedPlanner([])
-    with pytest.raises(UnsupportedContentError) as exc:
-        polish(tmp_path / "v.pptx", tmp_path / "out.pptx", theme="navy", planner=planner)
-    assert "video" in str(exc.value)
-    assert planner.feedback == []
+def test_video_decks_are_polished_with_the_video_kept(tmp_path):
+    from lockedbuilder import build_locked_deck
+
+    src = build_locked_deck(tmp_path / "locked.pptx")
+    result = polish(src, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
+    assert result.ok, result.attempts[-1].problems
+    assert result.verification.counts["locked"] == 9
 
 
 def test_invalid_file_is_rejected_before_any_ai_call(tmp_path):

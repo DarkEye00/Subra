@@ -22,6 +22,8 @@ from .verify import verify
 
 
 class UnsupportedContentError(Exception):
+    """Content we can't carry over. Locked objects (Amendment 1C) made this rare; kept as a safety net."""
+
     def __init__(self, problems):
         self.problems = problems
         super().__init__(
@@ -90,7 +92,8 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
     for number, current in enumerate(schedule, start=1):
         if before_attempt is not None:
             before_attempt(number, current)
-        record, feedback, success = _attempt(number, current, deck, feedback, theme_obj, output_path, render_fn)
+        record, feedback, success = _attempt(number, current, deck, feedback, theme_obj, input_path, output_path,
+                                             render_fn)
         attempts.append(record)
         if on_attempt is not None:
             on_attempt(record)
@@ -109,7 +112,7 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
     )
 
 
-def _attempt(number, planner, deck, feedback, theme, output_path, render_fn):
+def _attempt(number, planner, deck, feedback, theme, input_path, output_path, render_fn):
     """One plan -> repair -> render -> verify pass. Returns (record, next_feedback, success)."""
     attempt = planner.plan(deck, feedback=feedback)
     record = AttemptRecord(
@@ -133,8 +136,9 @@ def _attempt(number, planner, deck, feedback, theme, output_path, render_fn):
     os.close(fd)
     tmp = Path(tmp_name)
     try:
-        report = render_fn(plan, deck, theme, tmp)
-        verification = verify(deck, extract_deck(tmp))
+        report = render_fn(plan, deck, theme, tmp, input_path)
+        verification = verify(deck, extract_deck(tmp), slide_sources=report.slide_sources,
+                              dropped_backgrounds=report.dropped_backgrounds)
         record.verification_passed = verification.passed
         record.problems = verification.problems
         if verification.passed:

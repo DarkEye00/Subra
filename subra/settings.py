@@ -183,6 +183,7 @@ FILE_RETENTION_DAYS = int(env("FILE_RETENTION_DAYS", "7"))
 LEGAL_PAGES_REVIEWED = env_bool("LEGAL_PAGES_REVIEWED", False)
 SUPPORT_EMAIL = env("SUPPORT_EMAIL", "support@example.co.ke")
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_UPLOAD_BYTES_MEDIA = 100 * 1024 * 1024  # decks with video or audio (Amendment 1D)
 MAX_SLIDES = 50
 UPLOAD_RATE_LIMIT = (10, 3600)  # uploads per hour, per user and per IP
 PAYMENT_RATE_LIMIT = (5, 600)  # payment attempts per 10 minutes, per user and per IP

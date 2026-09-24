@@ -6,6 +6,13 @@
   <h1 class="mt-2 break-words text-3xl font-extrabold tracking-tight">{{ order.original_name }}</h1>
   <p class="mt-1 text-muted">{{ order.slide_count }} slides</p>
 
+  {% if order.locked_description and order.status != 'expired' %}
+    <p class="mt-4 rounded-lg bg-page px-4 py-3 text-sm">{{ order.locked_description }} These are kept exactly as they are, and the slides are restyled around them.</p>
+  {% endif %}
+  {% if order.has_linked_objects and order.status != 'expired' %}
+    <p class="mt-3 rounded-lg bg-marigold-soft px-4 py-3 text-sm">This deck links to external files that may not open on other computers. We keep the links as they are.</p>
+  {% endif %}
+
   {% if order.status == 'quoted' or order.status == 'payment_failed' %}
     {% if order.status == 'payment_failed' and last_payment %}
       <p class="mt-6 rounded-lg bg-danger-soft px-4 py-3 font-bold text-danger">{{ last_payment.customer_message }} You haven't been charged. You can try again below.</p>
@@ -67,6 +74,9 @@
     {% if previews %}
     <section class="mt-10">
       <h2 class="text-lg font-bold">Preview</h2>
+      {% if order.preview_caveats %}
+        <p class="mt-1 text-sm text-muted">In these previews, {{ order.preview_caveats|join:" and " }}. This doesn't affect your download.</p>
+      {% endif %}
       <div class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         {% for url in previews %}
           <a href="{{ url }}" target="_blank" rel="noopener" class="block overflow-hidden rounded-lg border border-line bg-white hover:border-ink">
