@@ -110,5 +110,10 @@ def test_daraja_provider_normalises_callbacks():
     payload = {"Body": {"stkCallback": {"CheckoutRequestID": "ws_CO_1", "ResultCode": 0, "ResultDesc": "ok",
                                         "CallbackMetadata": {"Item": [{"Name": "Amount", "Value": 350},
                                                                       {"Name": "MpesaReceiptNumber", "Value": "R1"}]}}}}
-    event = DarajaProvider(client=None).handle_callback(payload)
+    event = DarajaProvider(client=None).handle_callback(json.dumps(payload).encode(), {})
     assert (event.provider_ref, event.state, event.receipt, int(event.amount)) == ("ws_CO_1", "paid", "R1", 350)
+
+
+def test_daraja_rejects_malformed_callbacks():
+    with pytest.raises(ValueError):
+        DarajaProvider(client=None).handle_callback(b'{"Body": {}}', {})

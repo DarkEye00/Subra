@@ -46,7 +46,8 @@ class PaymentProvider(Protocol):
 
     def initiate(self, order, phone) -> InitResult: ...
 
-    def handle_callback(self, payload) -> PaymentEvent: ...
+    def handle_callback(self, body: bytes, headers) -> PaymentEvent:
+        """Authenticate and parse a webhook. Raises CallbackRejected if it isn't genuine, ValueError if malformed."""
 
     def check_status(self, ref) -> PaymentEvent: ...
 

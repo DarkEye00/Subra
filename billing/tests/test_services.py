@@ -25,8 +25,8 @@ class FakeProvider:
         self.initiated.append((order.pk, phone, order.price_kes))
         return InitResult(provider_ref=self.ref, reference=f"subra-{order.pk}-t", raw={"invoice": {"invoice_id": self.ref}})
 
-    def handle_callback(self, payload):
-        return event(**payload)
+    def handle_callback(self, body, headers):
+        return event(**json.loads(body))
 
     def check_status(self, ref):
         if isinstance(self.status, Exception):
@@ -54,7 +54,7 @@ def pending_payment(order, ref="INV-1"):
 
 
 def callback(**kw):
-    return services.handle_callback("intasend", kw, provider=FakeProvider())
+    return services.handle_callback("intasend", json.dumps(kw).encode(), {}, provider=FakeProvider())
 
 
 # --- starting a payment ---------------------------------------------------
@@ -243,3 +243,7 @@ def test_webhook_marks_paid(client, quoted_order, enqueued):
 def test_webhook_rejects_malformed_json(client, db):
     resp = client.post("/billing/webhooks/intasend/", data="{not json", content_type="application/json")
     assert resp.status_code == 400
+
+
+def test_webhook_for_an_unknown_provider_is_404(client, db):
+    assert client.post("/billing/webhooks/stripe/", data="{}", content_type="application/json").status_code == 404

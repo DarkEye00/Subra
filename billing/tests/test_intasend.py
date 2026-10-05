@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -30,6 +31,10 @@ class FakeSession:
 def provider(session, env="sandbox"):
     return IntaSendProvider(env=env, publishable_key="ISPubKey_test", secret_key="ISSecretKey_test",
                             webhook_secret="challenge-123", session=session)
+
+
+def callback(p, payload):
+    return p.handle_callback(json.dumps(payload).encode(), {})
 
 
 ORDER = SimpleNamespace(pk=42, price_kes=350, public_id=SimpleNamespace(hex="abcdef0123456789"))
@@ -73,16 +78,16 @@ def test_initiate_error_raises_provider_error():
 
 def test_callback_with_wrong_challenge_is_rejected():
     with pytest.raises(CallbackRejected):
-        provider(FakeSession([])).handle_callback(invoice("COMPLETE", challenge="nope"))
+        callback(provider(FakeSession([])), invoice("COMPLETE", challenge="nope"))
 
 
 def test_callback_without_challenge_is_rejected():
     with pytest.raises(CallbackRejected):
-        provider(FakeSession([])).handle_callback(invoice("COMPLETE"))
+        callback(provider(FakeSession([])), invoice("COMPLETE"))
 
 
 def test_complete_callback_becomes_a_paid_event():
-    event = provider(FakeSession([])).handle_callback(
+    event = callback(provider(FakeSession([])), 
         invoice("COMPLETE", challenge="challenge-123", charges="15.75", net_amount="334.25",
                 mpesa_reference="SJK1ABC2DE"))
     assert (event.provider_ref, event.state, event.receipt) == ("XMSLWOS", "paid", "SJK1ABC2DE")
@@ -92,18 +97,18 @@ def test_complete_callback_becomes_a_paid_event():
 
 @pytest.mark.parametrize("state", ["FAILED", "CANCELED"])
 def test_failed_callback_becomes_a_failed_event(state):
-    event = provider(FakeSession([])).handle_callback(
+    event = callback(provider(FakeSession([])), 
         invoice(state, challenge="challenge-123", failed_reason="Request cancelled by user", failed_code="1032"))
     assert (event.state, event.code, event.reason) == ("failed", "1032", "Request cancelled by user")
 
 
 @pytest.mark.parametrize("state", ["PENDING", "PROCESSING", "RETRY"])
 def test_in_progress_states_are_pending(state):
-    assert provider(FakeSession([])).handle_callback(invoice(state, challenge="challenge-123")).state == "pending"
+    assert callback(provider(FakeSession([])), invoice(state, challenge="challenge-123")).state == "pending"
 
 
 def test_partial_payment_is_not_paid():
-    event = provider(FakeSession([])).handle_callback(invoice("PARTIAL", challenge="challenge-123", value="100.00"))
+    event = callback(provider(FakeSession([])), invoice("PARTIAL", challenge="challenge-123", value="100.00"))
     assert event.state == "failed" and event.amount == Decimal("100.00")
 
 
@@ -119,3 +124,9 @@ def test_check_status_reads_the_invoice():
 def test_check_status_server_error_is_provider_error():
     with pytest.raises(ProviderError):
         provider(FakeSession([FakeResponse(500, {})])).check_status("XMSLWOS")
+
+
+@pytest.mark.parametrize("body", [b"{not json", b"[]", b'{"state": "COMPLETE"}'])
+def test_malformed_callbacks_are_value_errors(body):
+    with pytest.raises(ValueError):
+        provider(FakeSession([])).handle_callback(body, {})

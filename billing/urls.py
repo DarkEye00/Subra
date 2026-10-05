@@ -4,5 +4,5 @@ from . import views
 
 app_name = "billing"
 urlpatterns = [
-    path("webhooks/intasend/", views.intasend_webhook, name="intasend_webhook"),
+    path("webhooks/<slug:provider>/", views.webhook, name="webhook"),
 ]

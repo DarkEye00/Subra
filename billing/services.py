@@ -64,10 +64,10 @@ def start_payment(order, raw_phone, provider=None):
     return payment
 
 
-def handle_callback(provider_name, payload, provider=None):
-    """Authenticate and apply a provider callback. Raises CallbackRejected on a bad signature."""
+def handle_callback(provider_name, body, headers, provider=None):
+    """Authenticate and apply a webhook. Raises CallbackRejected (not genuine) or ValueError (malformed)."""
     provider = provider or get_provider(provider_name)
-    return apply_event(provider.name, provider.handle_callback(payload), source="callback")
+    return apply_event(provider.name, provider.handle_callback(body, headers), source="callback")
 
 
 def check_payment(payment, provider=None):

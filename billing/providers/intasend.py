@@ -6,6 +6,7 @@ with "Authorization: Bearer <secret key>" plus the INTASEND_PUBLIC_API_KEY heade
 Webhooks carry the "challenge" string configured in the IntaSend dashboard.
 """
 
+import json
 import logging
 import uuid
 from decimal import Decimal, InvalidOperation
@@ -98,7 +99,10 @@ class IntaSendProvider:
             raise ProviderError(f"IntaSend returned no invoice: {str(data)[:200]}")
         return InitResult(provider_ref=invoice["invoice_id"], reference=reference, raw=data)
 
-    def handle_callback(self, payload):
+    def handle_callback(self, body, headers):
+        payload = json.loads(body)
+        if not isinstance(payload, dict) or "invoice_id" not in payload:
+            raise ValueError("Not an IntaSend webhook")
         challenge = str(payload.get("challenge") or "")
         if not self.webhook_secret or not compare_digest(challenge, self.webhook_secret):
             raise CallbackRejected("IntaSend webhook challenge mismatch")

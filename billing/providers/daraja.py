@@ -5,6 +5,7 @@ when SUBRA has its own paybill or till; construct it with explicit credentials.
 """
 
 import base64
+import json
 import logging
 import time
 from datetime import datetime
@@ -143,9 +144,14 @@ class DarajaProvider:
         data = self.client.stk_push(phone, order.price_kes, reference=reference, description="Deck polish")
         return InitResult(provider_ref=data["CheckoutRequestID"], reference=reference, raw=data)
 
-    def handle_callback(self, payload):
+    def handle_callback(self, body, headers):
         # Daraja doesn't sign callbacks: protect the callback URL with a secret path segment.
-        stk = payload["Body"]["stkCallback"]
+        payload = json.loads(body)
+        try:
+            stk = payload["Body"]["stkCallback"]
+            stk["CheckoutRequestID"]
+        except (KeyError, TypeError):
+            raise ValueError("Not a Daraja STK callback")
         code = str(stk.get("ResultCode"))
         items = {i.get("Name"): i.get("Value") for i in stk.get("CallbackMetadata", {}).get("Item", [])}
         amount = items.get("Amount")
