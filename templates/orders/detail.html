@@ -86,6 +86,25 @@
     {% if overflow %}
       <p class="mt-4 rounded-lg bg-marigold-soft px-4 py-3 text-sm">Slide{{ overflow|length|pluralize }} {{ overflow|join:", " }} {{ overflow|length|pluralize:"has,have" }} a lot of text, so the type is small. Consider splitting {{ overflow|length|pluralize:"it,them" }} in PowerPoint.</p>
     {% endif %}
+    {% if order.switch_error %}
+      <p class="mt-4 rounded-lg bg-danger-soft px-4 py-3 text-sm font-bold text-danger">{{ order.switch_error }}</p>
+    {% endif %}
+    {% if order.status == 'ready' and order.plan %}
+      <form method="post" action="{% url 'orders:theme' order.public_id %}" class="panel mt-8 p-5 sm:p-6">
+        {% csrf_token %}
+        <h2 class="text-lg font-bold">Try another theme</h2>
+        {% if last_payment.status == 'pending' %}
+          <p class="mt-1 text-muted">You can switch themes once the payment has gone through.</p>
+        {% else %}
+          <p class="mt-1 text-muted">Free, as often as you like. Your words stay exactly as they are.</p>
+        {% endif %}
+        <div class="mt-4 flex flex-wrap gap-2">
+          {% for theme in themes %}{% if theme != order.theme %}
+            <button name="theme" value="{{ theme.slug }}" class="btn-quiet" {% if not order.can_switch_theme %}disabled{% endif %}>Switch to {{ theme.name }}</button>
+          {% endif %}{% endfor %}
+        </div>
+      </form>
+    {% endif %}
 
     <section class="mt-10">
       <h2 class="text-lg font-bold">Preview</h2>

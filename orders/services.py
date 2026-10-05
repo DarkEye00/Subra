@@ -32,6 +32,12 @@ class GenerationError(Exception):
         self.blocking_order = blocking_order
 
 
+class ThemeSwitchError(Exception):
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message
+
+
 def default_theme():
     return Theme.objects.filter(active=True).first()
 
@@ -118,6 +124,25 @@ def discard_order(order):
         processing.delete_order_files(order)
         order.transition(S.EXPIRED, note="Discarded by customer")
     return order
+
+
+def start_theme_switch(order, theme):
+    """Re-render a generated deck in another theme from its saved plan: no AI call, free, any number of times."""
+    with transaction.atomic():
+        order = Order.objects.select_for_update().get(pk=order.pk)
+        if not theme.active or theme.pk == order.theme_id:
+            raise ThemeSwitchError("Choose a different theme.")
+        if not order.can_switch_theme:
+            raise ThemeSwitchError("The theme can't be changed right now.")
+        order.transition(S.RERENDERING, note=f"Switching to {theme.slug}", switching_to=theme, switch_error="")
+        transaction.on_commit(lambda: _enqueue_rerender(order))
+    return order
+
+
+def _enqueue_rerender(order):
+    from .tasks import rerender_order
+
+    rerender_order.delay(order.pk)
 
 
 def _enqueue(order):

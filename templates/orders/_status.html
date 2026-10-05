@@ -6,6 +6,10 @@
     {% if waited > 90 %}
       <p class="mt-4 text-sm text-muted">No prompt? It may have timed out. We'll confirm with M-Pesa within a few minutes, and you can try again once it's cancelled.</p>
     {% endif %}
+  {% elif order.status == 'rerendering' %}
+    <h2 class="text-2xl font-bold tracking-tight">Switching to {{ order.switching_to.name }}…</h2>
+    <p class="mt-2 text-muted">Restyling your slides, then checking every word and number again. This takes under a minute.</p>
+    <div class="progress-bar mt-6" aria-hidden="true"></div>
   {% elif order.waiting_for_capacity %}
     <h2 class="text-2xl font-bold tracking-tight">Your deck is in the queue</h2>
     <p class="mt-2 text-muted">We're busy right now. Your deck will start soon, and you can leave this page.</p>

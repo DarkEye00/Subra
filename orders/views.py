@@ -122,6 +122,23 @@ def polish(request, public_id):
 
 @login_required
 @require_POST
+def switch_theme(request, public_id):
+    order = _own_order(request, public_id)
+    theme = Theme.objects.filter(slug=request.POST.get("theme"), active=True).first()
+    if theme is None:
+        messages.error(request, "Choose a theme.")
+    elif not allow(request, "theme", *settings.THEME_SWITCH_RATE_LIMIT):
+        messages.error(request, "You've switched themes a lot in the last hour. Please try again later.")
+    else:
+        try:
+            services.start_theme_switch(order, theme)
+        except services.ThemeSwitchError as e:
+            messages.error(request, e.message)
+    return redirect("orders:detail", public_id=public_id)
+
+
+@login_required
+@require_POST
 def pay(request, public_id):
     order = _own_order(request, public_id)
     if not allow(request, "pay", *settings.PAYMENT_RATE_LIMIT):

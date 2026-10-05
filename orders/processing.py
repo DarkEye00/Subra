@@ -11,10 +11,11 @@ from pathlib import Path
 from django.conf import settings
 from django.core.files import File
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.utils import timezone
 
 from core.alerts import alert_admins
-from polisher.pipeline import polish
+from polisher.pipeline import polish, rerender
 from polisher.preview import PreviewError, render_previews
 
 from . import spend
@@ -86,6 +87,43 @@ def run_polish(order):
         )
         delete_files(replaced)
     return result
+
+
+
+def run_rerender(order):
+    """Re-render the saved plan in order.switching_to. Returns True if the switch took effect.
+
+    A switch released as stuck (or overtaken by a newer one) may still finish; its output is discarded.
+    """
+    theme = order.switching_to
+    with tempfile.TemporaryDirectory(prefix="subra-switch-") as tmp:
+        tmp = Path(tmp)
+        src, out = fetch_original(order, tmp), tmp / "polished.pptx"
+        result = rerender(src, out, theme.slug, order.plan)
+        if not result.ok:
+            finish_switch_failed(order, theme, result.failure)
+            return False
+        previews = make_previews(order, out, tmp)
+        with transaction.atomic():
+            current = Order.objects.select_for_update().get(pk=order.pk)
+            if current.status != S.RERENDERING or current.switching_to_id != theme.pk:
+                log.warning("Theme switch for order %s finished after it was released; discarding it", order.pk)
+                return False
+            replaced = store_result(current, out, previews)
+            current.transition(S.READY, note=f"Switched to {theme.slug}", theme=theme, switching_to=None,
+                               switch_error="", overflow_slides=result.overflow_slides)
+        delete_files(replaced)
+    return True
+
+
+def finish_switch_failed(order, theme, reason):
+    """Back to READY with the previous deck untouched, unless a newer switch has taken over."""
+    with transaction.atomic():
+        current = Order.objects.select_for_update().get(pk=order.pk)
+        if current.status != S.RERENDERING or current.switching_to_id != theme.pk:
+            return
+        current.transition(S.READY, note=f"Theme switch failed: {reason}"[:500], switching_to=None,
+                           switch_error=f"We couldn't switch to {theme.name}; your deck is unchanged.")
 
 
 def fetch_original(order, tmp):

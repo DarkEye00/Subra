@@ -188,6 +188,7 @@ MAX_UPLOAD_BYTES_MEDIA = 100 * 1024 * 1024  # decks with video or audio (Amendme
 MAX_SLIDES = 50
 UPLOAD_RATE_LIMIT = (10, 3600)  # uploads per hour, per user and per IP
 PAYMENT_RATE_LIMIT = (5, 600)  # payment attempts per 10 minutes, per user and per IP
+THEME_SWITCH_RATE_LIMIT = (10, 3600)  # theme switches per hour, per user and per IP (each one runs LibreOffice)
 
 # Payments (Amendment 1A): IntaSend at launch; Daraja is a future provider.
 PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", "intasend")

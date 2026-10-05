@@ -56,11 +56,27 @@ def process_order(self, order_id):
 
 
 @shared_task
+def rerender_order(order_id):
+    order = Order.objects.select_related("switching_to").filter(pk=order_id).first()
+    if order is None or order.status != S.RERENDERING or order.switching_to is None:
+        return "skipped"
+    try:
+        return "done" if processing.run_rerender(order) else "unchanged"
+    except Exception as e:
+        log.exception("Theme switch crashed for order %s", order_id)
+        processing.finish_switch_failed(order, order.switching_to, f"Internal error: {type(e).__name__}: {e}")
+        return "failed"
+
+
+@shared_task
 def release_queued_orders():
-    """Start queued orders that were waiting (spend cap, AI outage) or whose task was lost."""
+    """Release theme switches stuck for 10 minutes, then start queued orders that were waiting (spend cap,
+    AI outage) or whose task was lost."""
+    stale = timezone.now() - timedelta(minutes=10)
+    for order in Order.objects.filter(status=S.RERENDERING, updated_at__lt=stale).select_related("switching_to"):
+        processing.finish_switch_failed(order, order.switching_to, "Timed out")
     if spend.cap_reached():
         return 0
-    stale = timezone.now() - timedelta(minutes=10)
     waiting = Q(waiting_for_capacity=True) | Q(updated_at__lt=stale)
     ids = list(Order.objects.filter(waiting, status=S.QUEUED).values_list("pk", flat=True))
     for pk in ids:

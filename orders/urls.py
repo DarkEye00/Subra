@@ -8,6 +8,7 @@ urlpatterns = [
     path("", views.order_list, name="list"),
     path("<uuid:public_id>/", views.detail, name="detail"),
     path("<uuid:public_id>/polish/", views.polish, name="polish"),
+    path("<uuid:public_id>/theme/", views.switch_theme, name="theme"),
     path("<uuid:public_id>/pay/", views.pay, name="pay"),
     path("<uuid:public_id>/status/", views.status, name="status"),
     path("<uuid:public_id>/discard/", views.discard, name="discard"),

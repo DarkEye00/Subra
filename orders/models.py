@@ -91,6 +91,7 @@ class Order(models.Model):
     overflow_slides = models.JSONField(default=list, blank=True)
     locked_summary = models.JSONField(default=dict, blank=True)  # locked objects found at upload (Amendment 1C)
     switch_error = models.CharField(max_length=200, blank=True)
+    switching_to = models.ForeignKey(Theme, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     waiting_for_capacity = models.BooleanField(default=False)
     failure_reason = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -142,6 +143,11 @@ class Order(models.Model):
     @property
     def can_pay(self):
         return (self.status == self.Status.READY and not self.is_paid and not self.files_deleted_at
+                and not self.has_pending_payment)
+
+    @property
+    def can_switch_theme(self):
+        return (self.status == self.Status.READY and bool(self.plan) and not self.files_deleted_at
                 and not self.has_pending_payment)
 
     @property
