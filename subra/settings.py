@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 
 import dj_database_url
-from celery.schedules import crontab
 from django.core.exceptions import ImproperlyConfigured
 
 from polisher.cost import PRICING
@@ -152,7 +151,7 @@ CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULE = {
-    "delete-expired-files": {"task": "orders.tasks.delete_expired_files", "schedule": crontab(hour=2, minute=30)},
+    "delete-expired-files": {"task": "orders.tasks.delete_expired_files", "schedule": 3600.0},  # 48h promise
     "release-queued-orders": {"task": "orders.tasks.release_queued_orders", "schedule": 600.0},
     "sweep-pending-payments": {"task": "billing.tasks.sweep_pending_payments", "schedule": 300.0},
 }

@@ -265,3 +265,9 @@ def test_a_recent_generation_is_left_alone(queued_order):
     stall(queued_order, 5)
     tasks.release_queued_orders()
     assert Order.objects.get(pk=queued_order.pk).status == S.PROCESSING
+
+
+def test_expired_decks_are_swept_at_least_hourly(settings):
+    """Pages promise deletion 48 hours after a deck is ready; a once-a-day sweep would let it live for up to 72."""
+    schedule = settings.CELERY_BEAT_SCHEDULE["delete-expired-files"]["schedule"]
+    assert isinstance(schedule, (int, float)) and schedule <= 3600
