@@ -126,3 +126,11 @@ def test_a_deck_with_a_pending_payment_cant_be_discarded(order_factory):
 def test_a_deck_whose_files_are_gone_never_blocks_a_new_one(order_factory, no_enqueue):
     order_factory("Gone.pptx", status=S.READY, files_deleted_at=timezone.now())
     services.start_generation(order_factory("New.pptx"))
+
+
+def test_deleting_a_deck_also_deletes_its_saved_plan(ready_order):
+    """The plan quotes the start of some paragraphs (stat highlights), so it goes with the files."""
+    assert ready_order.plan
+    services.discard_order(ready_order)
+    ready_order.refresh_from_db()
+    assert ready_order.plan is None

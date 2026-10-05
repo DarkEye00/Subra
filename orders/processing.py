@@ -181,4 +181,5 @@ def delete_order_files(order):
     order.original_file = ""
     order.result_file = ""
     order.preview_images = []
+    order.plan = None  # it quotes the start of some paragraphs, so it goes with the files
     order.files_deleted_at = timezone.now()
