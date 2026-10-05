@@ -4,12 +4,12 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Sum
 from django.utils import timezone
 
 from core.alerts import alert_admins
 
-from .models import DailySpend
+from .models import AIJob, DailySpend, Order
 
 
 class SpendCapReached(Exception):
@@ -52,3 +52,25 @@ def ensure_capacity():
             "(Nairobi time) or when you raise AI_DAILY_CAP_USD.",
         )
     raise SpendCapReached(f"Daily AI spend cap of ${settings.AI_DAILY_CAP_USD} reached")
+
+
+def month_summary(today=None):
+    """This month: AI spent on decks that were paid for and on decks that weren't, and the share paid for."""
+    start = (today or timezone.localdate()).replace(day=1)
+    jobs = AIJob.objects.filter(created_at__date__gte=start)
+
+    def cost(qs):
+        return qs.aggregate(t=Sum("cost_kes"))["t"] or Decimal("0")
+
+    generated = Order.objects.filter(events__to_status=Order.Status.READY,
+                                     events__created_at__date__gte=start).distinct()
+    count = generated.count()
+    paid = generated.filter(paid_at__isnull=False).count()
+    return {
+        "month": start,
+        "paid_cost_kes": cost(jobs.filter(order__paid_at__isnull=False)),
+        "unpaid_cost_kes": cost(jobs.filter(order__paid_at__isnull=True)),
+        "generated": count,
+        "paid": paid,
+        "paid_share": round(100 * paid / count) if count else None,
+    }

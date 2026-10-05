@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from core.alerts import alert_admins
@@ -21,6 +22,27 @@ from .providers import PaymentEvent, ProviderError, get_provider
 log = logging.getLogger(__name__)
 S = Order.Status
 MAX_STORED_CALLBACKS = 20
+
+STARTER_THRESHOLDS = (0.8, 0.95)
+
+
+def _check_starter_limit(payment):
+    """Paystack stops a Starter Business at a lifetime limit until it's registered. Warn before that."""
+    limit = settings.PAYSTACK_STARTER_LIMIT_KES
+    if payment.provider != "paystack" or not limit:
+        return
+    collected = Payment.objects.filter(provider="paystack",
+                                       status__in=[Payment.Status.PAID, Payment.Status.REFUNDED])
+    total = collected.aggregate(t=Sum("amount_kes"))["t"] or 0
+    before = total - payment.amount_kes  # refunds don't lower the total, so each threshold is crossed once
+    for share in STARTER_THRESHOLDS:
+        if before < limit * share <= total:
+            alert_admins(
+                f"Paystack Starter limit {round(share * 100)}% used",
+                f"Paystack has collected KES {total:,} of the KES {limit:,} Starter Business limit. Payments stop "
+                "at the limit until the business is registered. Register it, upgrade the Paystack account, then "
+                "set PAYSTACK_STARTER_LIMIT_KES=0.",
+            )
 
 
 class PaymentError(Exception):
@@ -134,6 +156,7 @@ def apply_event(provider_name, event: PaymentEvent, source):
             )
             return payment
         _mark_paid(payment, event)
+        _check_starter_limit(payment)
     return payment
 
 

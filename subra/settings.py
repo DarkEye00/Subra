@@ -192,6 +192,7 @@ THEME_SWITCH_RATE_LIMIT = (10, 3600)  # theme switches per hour, per user and pe
 
 # Payments (Amendment 1A): IntaSend at launch; Daraja is a future provider.
 PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", "intasend")
+PAYSTACK_STARTER_LIMIT_KES = int(env("PAYSTACK_STARTER_LIMIT_KES", "250000"))  # 0 once the business is registered
 INTASEND_ENV = env("INTASEND_ENV", "sandbox")  # sandbox | live
 INTASEND_PUBLISHABLE_KEY = env("INTASEND_PUBLISHABLE_KEY", "")
 INTASEND_SECRET_KEY = env("INTASEND_SECRET_KEY", "")

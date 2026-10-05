@@ -7,6 +7,7 @@ from django.db.models.functions import Coalesce
 
 from billing.models import Payment
 
+from . import spend
 from .models import AIJob, DailySpend, Order, OrderEvent, Theme
 
 ZERO = Value(Decimal("0"), output_field=DecimalField(max_digits=10, decimal_places=2))
@@ -113,6 +114,10 @@ class DailySpendAdmin(admin.ModelAdmin):
     @admin.display(description="Cap (USD)")
     def cap(self, obj):
         return settings.AI_DAILY_CAP_USD
+
+    def changelist_view(self, request, extra_context=None):
+        extra_context = {**(extra_context or {}), "month": spend.month_summary()}
+        return super().changelist_view(request, extra_context=extra_context)
 
 
 @admin.register(Theme)

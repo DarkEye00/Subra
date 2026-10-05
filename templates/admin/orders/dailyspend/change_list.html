@@ -1,0 +1,9 @@
+{% extends "admin/change_list.html" %}
+{% block content_title %}{{ block.super }}
+<div class="module" style="margin-bottom: 20px; padding: 10px 15px;">
+  <h2>This month ({{ month.month|date:"F Y" }})</h2>
+  <p>AI spent on decks that were paid for: <strong>KES {{ month.paid_cost_kes|floatformat:2 }}</strong></p>
+  <p>AI spent on decks that weren't: <strong>KES {{ month.unpaid_cost_kes|floatformat:2 }}</strong></p>
+  <p>Decks generated: {{ month.generated }}, paid for: {{ month.paid }}{% if month.paid_share is not None %} ({{ month.paid_share }}%){% endif %}</p>
+</div>
+{% endblock %}
