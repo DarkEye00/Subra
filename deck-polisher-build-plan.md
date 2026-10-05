@@ -352,3 +352,18 @@ Treat these as **locked**: video, audio, OLE objects (embedded or linked Excel a
 - **Images of text:** pass images to the planner as opaque items with size and aspect ratio. The planner may only place and scale them. No OCR in the MVP.
 - **Verify step:** every image part (slide, layout, master, background) is present with an identical SHA-256 hash, and crop and alt text are unchanged.
 - **Test set:** include a deck with a logo on the master, a cropped photo, a picture background, and SVG icons.
+
+---
+
+## Amendment 2 (5 Oct 2026): pay after generation, Paystack instead of IntaSend
+
+Full design: [docs/superpowers/specs/2026-10-05-pay-after-generation-paystack-design.md](docs/superpowers/specs/2026-10-05-pay-after-generation-paystack-design.md). It overrides section 2 (free re-run), section 3 (pay before processing, no AI on unpaid orders, refund on failure), section 8, Amendment 1A, and the section 12 line "Failures refund cleanly".
+
+- **Pay after generation:** customers upload, see previews of every slide, then pay to unlock the editable download. A deck that fails verification costs them nothing.
+- **Two tracks:** `Order.status` covers processing only (`quoted`, `queued`, `processing`, `ready`, `rerendering`, `failed`, `expired`). Payment is `Order.paid_at` plus the `Payment` records.
+- **Abuse limit:** one unpaid deck per account at a time. The daily spend cap stays.
+- **Themes:** switch freely before and after paying, re-rendered from the saved plan with no AI call. The free re-run is removed.
+- **Retention:** unpaid and failed decks are deleted after 48 hours, paid decks 7 days after payment.
+- **Paystack (Starter Business):** no business registration needed up to KES 250,000 in lifetime collections, with admin alerts at 80% and 95%. M-Pesa costs 1.5%. IntaSend and Daraja stay as alternative providers.
+- **Failures:** admins still get an email, but no refund is needed.
+- **Next, Amendment 3:** "describe your deck", covering look and layout. The customer's words are never changed.
