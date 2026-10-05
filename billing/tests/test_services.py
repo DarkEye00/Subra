@@ -265,3 +265,22 @@ def test_webhook_rejects_malformed_json(client, db):
 
 def test_webhook_for_an_unknown_provider_is_404(client, db):
     assert client.post("/billing/webhooks/stripe/", data="{}", content_type="application/json").status_code == 404
+
+
+# --- a charge the provider accepted after our request timed out --------------
+
+def test_a_paid_charge_we_have_no_record_of_alerts_admins(db):
+    """Paystack can accept a charge after our request timed out: no Payment row exists, but the customer paid."""
+    assert callback(ref="subra-77-ab12cd34", reference="subra-77-ab12cd34", receipt="QJK1ABC2DE") is None
+    alert = next(m for m in mail.outbox if "no record" in m.subject.lower())
+    assert "order 77" in alert.body and "QJK1ABC2DE" in alert.body
+
+
+def test_a_charge_from_elsewhere_on_the_account_sends_no_alert(db):
+    callback(ref="someone-else-1")
+    assert mail.outbox == []
+
+
+def test_an_unrecorded_charge_that_failed_sends_no_alert(db):
+    callback(ref="subra-77-ab12cd34", reference="subra-77-ab12cd34", state="failed")
+    assert mail.outbox == []

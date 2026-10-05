@@ -119,6 +119,8 @@ def apply_event(provider_name, event: PaymentEvent, source):
         )
         if payment is None:
             log.warning("%s event for unknown payment %s", provider_name, event.provider_ref)
+            if event.state == "paid":
+                _alert_unrecorded(provider_name, event)
             return None
         if source == "callback":
             payment.callback_count += 1
@@ -158,6 +160,23 @@ def apply_event(provider_name, event: PaymentEvent, source):
         _mark_paid(payment, event)
         _check_starter_limit(payment)
     return payment
+
+
+def _alert_unrecorded(provider_name, event):
+    """Our request can time out after the provider accepted the charge: then there's no Payment row, but the
+    customer paid. Charges made elsewhere on the same account don't carry our reference, so stay quiet."""
+    reference = event.reference or event.provider_ref or ""
+    if not reference.startswith("subra-"):
+        return
+    parts = reference.split("-")
+    order_pk = parts[1] if len(parts) >= 3 else "unknown"
+    alert_admins(
+        f"Payment with no record for order {order_pk}: check and refund",
+        f"{provider_name} confirmed a payment SUBRA has no record of (reference {reference}, KES {event.amount}, "
+        f"receipt {event.receipt or 'unknown'}). The payment request probably timed out on our side after the "
+        f"provider accepted it, so order {order_pk} is still unpaid. Refund it from the provider dashboard and "
+        "ask the customer to pay again.",
+    )
 
 
 def _fee(payment, event):
