@@ -191,3 +191,28 @@ def test_webhook_for_a_charge_we_never_made_is_accepted_and_ignored(client, db):
                             "data": {"reference": "someone-else-1", "status": "success", "amount": 5000}})
     assert post_webhook(client, body, headers["X-Paystack-Signature"]).status_code == 200
     assert not Payment.objects.exists()
+
+
+@pytest.mark.parametrize("status, has_amount", [("success", True), ("reversed", True), ("failed", False),
+                                                ("abandoned", False), ("ongoing", False)])
+def test_only_charges_where_money_moved_report_an_amount(status, has_amount):
+    """Paystack echoes the requested amount on every transaction; a failed or abandoned prompt moved no money."""
+    session = FakeSession([FakeResponse(200, {"status": True, "data": {"status": status, "reference": "subra-42-x",
+                                                                        "amount": 20000}})])
+    assert (provider(session).check_status("subra-42-x").amount is not None) is has_amount
+
+
+def test_a_cancelled_prompt_sends_no_money_alert(order_factory):
+    from django.core import mail
+
+    from billing import services
+    from orders.models import Order
+
+    order = order_factory(status=Order.Status.READY)
+    payment = Payment.objects.create(order=order, provider="paystack", provider_ref="subra-1-x", reference="subra-1-x",
+                                     phone="254712345678", amount_kes=350)
+    session = FakeSession([FakeResponse(200, {"status": True, "data": {
+        "status": "abandoned", "reference": "subra-1-x", "amount": 35000, "gateway_response": "Customer cancelled"}})])
+    services.check_payment(payment, provider=provider(session))
+    payment.refresh_from_db()
+    assert payment.status == "failed" and mail.outbox == []

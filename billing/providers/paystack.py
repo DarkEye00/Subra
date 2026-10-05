@@ -24,6 +24,7 @@ from . import CallbackRejected, InitResult, PaymentEvent, ProviderError
 API = "https://api.paystack.co"
 PAID = {"success"}
 FAILED = {"failed", "abandoned", "reversed"}
+MONEY_MOVED = {"success", "reversed"}  # Paystack echoes the requested amount even when nothing was paid
 
 
 def paystack_phone(phone):
@@ -108,7 +109,7 @@ class PaystackProvider:
         return PaymentEvent(
             provider_ref=str(data.get("reference") or fallback_ref),
             state=state,
-            amount=_kes(data.get("amount")),
+            amount=_kes(data.get("amount")) if status in MONEY_MOVED else None,
             receipt=str(data.get("receipt_number") or ""),
             fee=_kes(data.get("fees")),
             code=status,
