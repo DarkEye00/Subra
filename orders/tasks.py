@@ -84,19 +84,30 @@ def release_queued_orders():
     return len(ids)
 
 
-@shared_task
-def delete_expired_files():
-    """Delete originals, results and previews once expires_at passes (48 hours unpaid, 7 days after payment)."""
-    count = 0
-    expired = (
+def _expired():
+    """Decks whose files are due for deletion now."""
+    return (
         Order.objects.filter(expires_at__lte=timezone.now(), files_deleted_at__isnull=True)
         .exclude(status__in=IN_FLIGHT)
         .exclude(payments__status=Payment.Status.PENDING)  # wait for the payment sweep to settle it
         .distinct()
     )
-    for order in expired:
+
+
+def _expired_ids():
+    return list(_expired().values_list("pk", flat=True))
+
+
+@shared_task
+def delete_expired_files():
+    """Delete originals, results and previews once expires_at passes (48 hours unpaid, 7 days after payment)."""
+    count = 0
+    for pk in _expired_ids():
         with transaction.atomic():
-            order = Order.objects.select_for_update().get(pk=order.pk)
+            order = Order.objects.select_for_update().get(pk=pk)
+            # the list was read before the lock: a payment or a theme switch may have started since
+            if not _expired().filter(pk=pk).exists():
+                continue
             processing.delete_order_files(order)
             if order.can_transition(S.EXPIRED):
                 order.transition(S.EXPIRED, note="Files deleted after retention period")

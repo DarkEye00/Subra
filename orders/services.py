@@ -93,7 +93,8 @@ def set_theme(order, theme):
 
 def unpaid_work(user, exclude=None):
     """The customer's deck that has used AI but isn't paid for yet, if any (one at a time)."""
-    orders = Order.objects.filter(user=user, status__in=Order.UNPAID_WORK, paid_at__isnull=True)
+    orders = Order.objects.filter(user=user, status__in=Order.UNPAID_WORK, paid_at__isnull=True,
+                                  files_deleted_at__isnull=True)
     if exclude is not None:
         orders = orders.exclude(pk=exclude.pk)
     return orders.order_by("created_at").first()

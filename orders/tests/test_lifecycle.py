@@ -121,3 +121,8 @@ def test_a_deck_with_a_pending_payment_cant_be_discarded(order_factory):
                            amount_kes=350)
     with pytest.raises(ValueError):
         services.discard_order(order)
+
+
+def test_a_deck_whose_files_are_gone_never_blocks_a_new_one(order_factory, no_enqueue):
+    order_factory("Gone.pptx", status=S.READY, files_deleted_at=timezone.now())
+    services.start_generation(order_factory("New.pptx"))

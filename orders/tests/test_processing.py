@@ -204,3 +204,27 @@ def test_unexpired_decks_keep_their_files(ready_order):
     tasks.delete_expired_files()
     ready_order.refresh_from_db()
     assert not ready_order.files_deleted_at
+
+
+@pytest.mark.parametrize("change", ["paid", "switching"])
+def test_the_sweep_rechecks_each_deck_after_locking_it(ready_order, monkeypatch, change):
+    """The sweep reads its list once; a deck paid for, or switching theme, since then must be left alone."""
+    from orders.models import Theme
+
+    Order.objects.filter(pk=ready_order.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
+    read_list = tasks._expired_ids
+
+    def list_then_change():
+        ids = read_list()
+        if change == "paid":
+            Order.objects.filter(pk=ready_order.pk).update(paid_at=timezone.now(),
+                                                           expires_at=timezone.now() + timedelta(days=7))
+        else:
+            Order.objects.filter(pk=ready_order.pk).update(status=S.RERENDERING,
+                                                           switching_to=Theme.objects.get(slug="slate"))
+        return ids
+
+    monkeypatch.setattr(tasks, "_expired_ids", list_then_change)
+    tasks.delete_expired_files()
+    ready_order.refresh_from_db()
+    assert not ready_order.files_deleted_at and default_storage.exists(ready_order.result_file.name)
