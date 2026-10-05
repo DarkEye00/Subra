@@ -2,8 +2,8 @@
 
 Retry policy (build plan, section 6): if a plan is unusable or the rendered deck
 fails verification, plan again once with the list of problems; if that fails
-too, escalate to the stronger model once. If that fails, the run fails and the
-order goes to refund. API outages raise PlannerUnavailable instead, so the job
+too, escalate to the stronger model once. If that fails, the run fails (and the
+customer isn't charged). API outages raise PlannerUnavailable instead, so the job
 can be retried later without counting against the customer.
 """
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .ai import Usage
 from .extract import extract_deck
-from .plan import repair_plan, validate_plan
+from .plan import PlanFormatError, parse_plan, repair_plan, validate_plan
 from .render.renderer import render
 from .render.themes import get_theme
 from .validate import validate_file
@@ -74,6 +74,11 @@ class PolishResult:
     def overflow_slides(self):
         return self.render_report.overflow_slides if self.render_report else []
 
+    @property
+    def plan(self):
+        """The winning attempt's verified plan (a dict), saved so a theme switch can re-render it."""
+        return self.attempts[-1].plan if self.ok and self.attempts else None
+
 
 def polish(input_path, output_path, theme, planner, escalation=None, render_fn=render, before_attempt=None,
            on_attempt=None):
@@ -111,6 +116,54 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
         failure=f"No plan passed verification after {len(attempts)} attempts",
     )
 
+
+@dataclass
+class RerenderResult:
+    ok: bool
+    output_path: Path | None
+    render_report: object = None
+    verification: object = None
+    failure: str | None = None
+
+    @property
+    def overflow_slides(self):
+        return self.render_report.overflow_slides if self.render_report else []
+
+
+def rerender(input_path, output_path, theme, plan_dict, render_fn=render):
+    """Render a saved, already-verified plan in another theme: no planner call and no retry.
+
+    A new font can reflow text, so the result is verified again. On failure nothing is written.
+    """
+    input_path, output_path = Path(input_path), Path(output_path)
+    validate_file(input_path)
+    deck = extract_deck(input_path)
+    theme_obj = get_theme(theme)
+    try:
+        plan = parse_plan(plan_dict)
+    except PlanFormatError as e:
+        return RerenderResult(ok=False, output_path=None, failure=f"Saved plan unreadable: {e}")
+    errors = validate_plan(plan, deck)
+    if errors:
+        return RerenderResult(ok=False, output_path=None,
+                              failure="Saved plan no longer fits: " + "; ".join(errors[:5]))
+
+    fd, tmp_name = tempfile.mkstemp(suffix=".pptx", dir=output_path.parent)
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        report = render_fn(plan, deck, theme_obj, tmp, input_path)
+        verification = verify(deck, extract_deck(tmp), slide_sources=report.slide_sources,
+                              dropped_backgrounds=report.dropped_backgrounds)
+        if not verification.passed:
+            return RerenderResult(ok=False, output_path=None, render_report=report, verification=verification,
+                                  failure="Verification failed: " + "; ".join(verification.problems[:5]))
+        os.replace(tmp, output_path)
+        return RerenderResult(ok=True, output_path=output_path, render_report=report, verification=verification)
+    except Exception as e:  # a crash leaves the previous deck in place
+        return RerenderResult(ok=False, output_path=None, failure=f"Render failed: {type(e).__name__}: {e}")
+    finally:
+        tmp.unlink(missing_ok=True)
 
 def _attempt(number, planner, deck, feedback, theme, input_path, output_path, render_fn):
     """One plan -> repair -> render -> verify pass. Returns (record, next_feedback, success)."""

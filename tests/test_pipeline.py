@@ -1,4 +1,5 @@
 import copy
+import re
 
 import pytest
 from pptx import Presentation
@@ -7,7 +8,7 @@ from pptx.util import Inches
 from deckbuilder import build_rich_deck
 from polisher.ai import Usage
 from polisher.heuristic import plan_deck
-from polisher.pipeline import PlannerUnavailable, polish
+from polisher.pipeline import PlannerUnavailable, polish, rerender
 from polisher.planner import HeuristicPlanner, PlanAttempt
 from polisher.render.renderer import render
 from polisher.validate import ValidationError
@@ -149,3 +150,76 @@ def test_on_attempt_sees_the_attempt_before_an_outage_is_raised(tmp_path, deck_p
         polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=ScriptedPlanner(["outage"]),
                on_attempt=seen.append)
     assert len(seen) == 1
+
+
+def _theme_name(path):
+    """The colour scheme name apply_theme writes, e.g. "SUBRA Clean Slate"."""
+    from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    part = Presentation(path).slide_master.part.part_related_by(RT.THEME)
+    return re.search(rb'<a:clrScheme name="([^"]*)"', part.blob).group(1).decode()
+
+
+def test_a_successful_run_exposes_its_verified_plan(tmp_path, deck_path):
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
+    assert result.plan is not None and result.plan == result.attempts[-1].plan
+    assert len(result.plan["slides"]) == 7
+
+
+def test_a_failed_run_has_no_plan(tmp_path, deck_path):
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=ScriptedPlanner(["bad", "bad"]))
+    assert not result.ok and result.plan is None
+
+
+def test_rerender_applies_another_theme_to_a_saved_plan(tmp_path, deck_path):
+    first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
+    out = tmp_path / "slate.pptx"
+    result = rerender(deck_path, out, "slate", first.plan)
+    assert result.ok, result.failure
+    assert result.verification.passed
+    assert _theme_name(out) == "SUBRA Clean Slate"
+    assert _theme_name(tmp_path / "navy.pptx") == "SUBRA Navy Executive"
+
+
+def test_rerender_refuses_a_plan_that_no_longer_fits(tmp_path, deck_path):
+    first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
+    broken = copy.deepcopy(first.plan)
+    broken["slides"] = broken["slides"][:1]
+    out = tmp_path / "out.pptx"
+    result = rerender(deck_path, out, "slate", broken)
+    assert not result.ok and "s2-t1" in result.failure
+    assert not out.exists()
+
+
+def test_rerender_refuses_an_unreadable_plan(tmp_path, deck_path):
+    result = rerender(deck_path, tmp_path / "out.pptx", "slate", {"pages": []})
+    assert not result.ok and "unreadable" in result.failure
+
+
+def test_rerender_reports_a_verification_failure(tmp_path, deck_path):
+    first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
+
+    def lossy_render(plan, deck, theme, output, source):
+        report = render(plan, deck, theme, output, source)
+        prs = Presentation(output)
+        pic = next(sh for slide in prs.slides for sh in slide.shapes if sh.shape_type == 13)
+        pic.part.related_part(pic._element.blipFill.blip.rEmbed)._blob = build_png_variant()
+        prs.save(output)
+        return report
+
+    out = tmp_path / "out.pptx"
+    result = rerender(deck_path, out, "slate", first.plan, render_fn=lossy_render)
+    assert not result.ok and "Image [s5-i1]" in result.failure
+    assert not out.exists()
+
+
+def test_rerender_survives_a_renderer_crash(tmp_path, deck_path):
+    first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
+
+    def crash(*args):
+        raise RuntimeError("boom")
+
+    out = tmp_path / "out.pptx"
+    result = rerender(deck_path, out, "slate", first.plan, render_fn=crash)
+    assert not result.ok and result.failure == "Render failed: RuntimeError: boom"
+    assert not out.exists()
