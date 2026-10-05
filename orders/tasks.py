@@ -15,6 +15,8 @@ from .models import Order
 log = logging.getLogger(__name__)
 S = Order.Status
 IN_FLIGHT = set(Order.IN_FLIGHT)  # never expired: work is waiting or running
+STALLED_AFTER = timedelta(minutes=30)  # well past the slowest generation (three Claude attempts, then previews)
+RESTARTED = "Restarted: the worker stopped mid-job"
 
 
 @shared_task(bind=True, max_retries=12)
@@ -68,10 +70,33 @@ def rerender_order(order_id):
         return "failed"
 
 
+def _release_stalled_generations():
+    """A worker killed mid-job (a deploy, running out of memory) leaves the order PROCESSING for ever, and an
+    unpaid deck blocks the customer's next one. Restart it once; if it stalls again, fail it."""
+    cutoff = timezone.now() - STALLED_AFTER
+    restarted = []
+    for order in Order.objects.filter(status=S.PROCESSING, updated_at__lt=cutoff):
+        last_attempt = order.ai_jobs.order_by("-created_at").values_list("created_at", flat=True).first()
+        if last_attempt and last_attempt >= cutoff:
+            continue  # still making progress
+        with transaction.atomic():
+            order = Order.objects.select_for_update().get(pk=order.pk)
+            if order.status != S.PROCESSING:
+                continue
+            if order.events.filter(note=RESTARTED).exists():
+                processing.fail(order, "The worker stopped twice while polishing this deck")
+            else:
+                order.transition(S.QUEUED, note=RESTARTED, waiting_for_capacity=False)
+                restarted.append(order.pk)
+    for pk in restarted:
+        process_order.delay(pk)
+
+
 @shared_task
 def release_queued_orders():
-    """Release theme switches stuck for 10 minutes, then start queued orders that were waiting (spend cap,
-    AI outage) or whose task was lost."""
+    """Restart stalled generations, release theme switches stuck for 10 minutes, then start queued orders that
+    were waiting (spend cap, AI outage) or whose task was lost."""
+    _release_stalled_generations()
     stale = timezone.now() - timedelta(minutes=10)
     for order in Order.objects.filter(status=S.RERENDERING, updated_at__lt=stale).select_related("switching_to"):
         processing.finish_switch_failed(order, order.switching_to, "Timed out")

@@ -228,3 +228,40 @@ def test_the_sweep_rechecks_each_deck_after_locking_it(ready_order, monkeypatch,
     tasks.delete_expired_files()
     ready_order.refresh_from_db()
     assert not ready_order.files_deleted_at and default_storage.exists(ready_order.result_file.name)
+
+
+# --- a worker that dies mid-job ---------------------------------------------
+
+def stall(order, minutes):
+    Order.objects.filter(pk=order.pk).update(status=S.PROCESSING, updated_at=timezone.now() - timedelta(minutes=minutes))
+
+
+def test_a_generation_stalled_by_a_dead_worker_is_restarted(queued_order):
+    stall(queued_order, 31)
+    tasks.release_queued_orders()
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.READY  # requeued, and Celery runs inline in tests
+    assert order.events.filter(note=tasks.RESTARTED).count() == 1
+
+
+def test_a_generation_that_stalls_twice_fails_and_alerts(queued_order):
+    from orders.models import OrderEvent
+
+    OrderEvent.objects.create(order=queued_order, from_status=S.PROCESSING, to_status=S.QUEUED, note=tasks.RESTARTED)
+    stall(queued_order, 31)
+    tasks.release_queued_orders()
+    assert Order.objects.get(pk=queued_order.pk).status == S.FAILED
+    assert any("failed to generate" in m.subject for m in mail.outbox)
+
+
+def test_a_generation_still_logging_attempts_is_left_alone(queued_order):
+    stall(queued_order, 31)
+    AIJob.objects.create(order=queued_order, attempt_number=1)  # an attempt finished just now
+    tasks.release_queued_orders()
+    assert Order.objects.get(pk=queued_order.pk).status == S.PROCESSING
+
+
+def test_a_recent_generation_is_left_alone(queued_order):
+    stall(queued_order, 5)
+    tasks.release_queued_orders()
+    assert Order.objects.get(pk=queued_order.pk).status == S.PROCESSING
