@@ -4,10 +4,12 @@ Only a confirmed payment of the exact quoted amount moves an order to PAID.
 """
 
 import logging
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from core.alerts import alert_admins
 from orders.models import Order
@@ -18,18 +20,11 @@ from .providers import PaymentEvent, ProviderError, get_provider
 
 log = logging.getLogger(__name__)
 S = Order.Status
-PAYABLE = {S.QUOTED, S.PAYMENT_FAILED}
 MAX_STORED_CALLBACKS = 20
 
 
 class PaymentError(Exception):
     """Something the customer should see, e.g. an invalid phone number."""
-
-
-def enqueue_processing(order):
-    from orders.tasks import process_order
-
-    process_order.delay(order.pk)
 
 
 def schedule_status_check(payment):
@@ -46,8 +41,8 @@ def start_payment(order, raw_phone, provider=None):
     provider = provider or get_provider()
     with transaction.atomic():
         order = Order.objects.select_for_update().get(pk=order.pk)
-        if order.status not in PAYABLE:
-            raise PaymentError("This order can't be paid right now.")
+        if not order.can_pay:
+            raise PaymentError("This deck can't be paid for right now.")
         try:
             result = provider.initiate(order, phone)
         except ProviderError as e:
@@ -57,7 +52,7 @@ def start_payment(order, raw_phone, provider=None):
             order=order, provider=provider.name, provider_ref=result.provider_ref, reference=result.reference,
             phone=phone, amount_kes=order.price_kes, raw_init=result.raw,
         )
-        order.transition(S.PAYMENT_PENDING, note=f"M-Pesa prompt sent to {phone} via {provider.name}")
+        order.log(f"M-Pesa prompt sent to {phone} via {provider.name}")
         order.user.mpesa_phone = phone
         order.user.save(update_fields=["mpesa_phone"])
         transaction.on_commit(lambda: schedule_status_check(payment))
@@ -150,13 +145,10 @@ def _fee(payment, event):
 
 
 def _mark_failed(payment, code, desc):
+    """Only the payment changes: the deck stays ready, and the customer can pay again."""
     payment.status = Payment.Status.FAILED
     payment.result_code, payment.result_desc = (code or "")[:32], (desc or "")[:255]
     payment.save()
-    order = Order.objects.select_for_update().get(pk=payment.order_id)
-    has_other_pending = order.payments.filter(status=Payment.Status.PENDING).exclude(pk=payment.pk).exists()
-    if order.status == S.PAYMENT_PENDING and not has_other_pending:
-        order.transition(S.PAYMENT_FAILED, note=f"Payment failed: {code} {desc}"[:500])
 
 
 def _mark_paid(payment, event):
@@ -166,18 +158,30 @@ def _mark_paid(payment, event):
         payment.provider_receipt = event.receipt
     payment.fee_kes, payment.fee_estimated = _fee(payment, event)
     order = Order.objects.select_for_update().get(pk=payment.order_id)
-    if order.status == S.PAYMENT_FAILED:
-        order.transition(S.PAYMENT_PENDING, note="Late M-Pesa confirmation")
-    if order.status == S.PAYMENT_PENDING:
+    receipt = event.receipt or "unknown"
+    if order.is_paid:
+        payment.result_desc = f"Duplicate payment, refund needed. {event.reason}"[:255]
         payment.save()
-        order.transition(S.PAID, note=f"M-Pesa receipt {event.receipt or '(from status check)'}")
-        transaction.on_commit(lambda: enqueue_processing(order))
+        alert_admins(
+            f"Duplicate M-Pesa payment on order {order.pk}: refund needed",
+            f"Payment {payment.pk} from {payment.phone} (receipt {receipt}, KES {payment.amount_kes}) arrived for "
+            f"order {order.pk}, which is already paid. Refund it from the provider dashboard, then mark the "
+            "payment refunded in the admin.",
+        )
         return
-    # The order was already paid by another payment: this one must be refunded.
-    payment.result_desc = f"Duplicate payment, refund needed. {event.reason}"[:255]
+    if order.status not in (S.READY, S.RERENDERING) or order.files_deleted_at:
+        payment.result_desc = f"Deck no longer exists, refund needed. {event.reason}"[:255]
+        payment.save()
+        alert_admins(
+            f"Payment for a deleted deck on order {order.pk}: refund needed",
+            f"Payment {payment.pk} from {payment.phone} (receipt {receipt}, KES {payment.amount_kes}) arrived for "
+            f"order {order.pk}, which is {order.get_status_display().lower()} and has no deck to download. "
+            "Refund it from the provider dashboard, then mark the payment refunded in the admin.",
+        )
+        return
     payment.save()
-    alert_admins(
-        f"Duplicate M-Pesa payment on order {order.pk}: refund needed",
-        f"Payment {payment.pk} from {payment.phone} (receipt {event.receipt or 'unknown'}, KES {payment.amount_kes}) "
-        f"arrived for order {order.pk}, which is already {order.status}. Refund it from the provider dashboard.",
-    )
+    now = timezone.now()
+    order.paid_at = now
+    order.expires_at = now + timedelta(days=settings.FILE_RETENTION_DAYS)
+    order.save(update_fields=["paid_at", "expires_at", "updated_at"])
+    order.log(f"Paid, M-Pesa receipt {event.receipt or '(from status check)'}")

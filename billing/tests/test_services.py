@@ -1,8 +1,10 @@
 import json
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
 from django.core import mail
+from django.utils import timezone
 
 from billing import services
 from billing.models import Payment
@@ -23,7 +25,8 @@ class FakeProvider:
         if self.fail:
             raise ProviderError("down")
         self.initiated.append((order.pk, phone, order.price_kes))
-        return InitResult(provider_ref=self.ref, reference=f"subra-{order.pk}-t", raw={"invoice": {"invoice_id": self.ref}})
+        return InitResult(provider_ref=self.ref, reference=f"subra-{order.pk}-t",
+                          raw={"invoice": {"invoice_id": self.ref}})
 
     def handle_callback(self, body, headers):
         return event(**json.loads(body))
@@ -41,12 +44,15 @@ def event(ref="INV-1", state="paid", amount="350", receipt="SJK1ABC2DE", fee="15
                         reference=reference, raw={"state": state, "ref": ref})
 
 
-@pytest.fixture
-def enqueued(monkeypatch):
-    calls = []
-    monkeypatch.setattr(services, "enqueue_processing", lambda order: calls.append(order.pk))
+@pytest.fixture(autouse=True)
+def no_status_checks(monkeypatch):
     monkeypatch.setattr(services, "schedule_status_check", lambda payment: None)
-    return calls
+
+
+@pytest.fixture
+def ready(order_factory):
+    """A generated, unpaid KES 350 deck (payment rules don't need its files)."""
+    return order_factory(status=S.READY)
 
 
 def pending_payment(order, ref="INV-1"):
@@ -57,156 +63,167 @@ def callback(**kw):
     return services.handle_callback("intasend", json.dumps(kw).encode(), {}, provider=FakeProvider())
 
 
-# --- starting a payment ---------------------------------------------------
+# --- starting a payment -----------------------------------------------------
 
-def test_start_payment_sends_stk_push_and_waits(quoted_order, enqueued):
+def test_start_payment_sends_stk_push_and_waits(ready):
     provider = FakeProvider()
-    payment = services.start_payment(quoted_order, "0712 345 678", provider=provider)
-    assert provider.initiated == [(quoted_order.pk, "254712345678", 350)]
-    assert (payment.provider, payment.provider_ref, payment.reference) == ("intasend", "INV-1", f"subra-{quoted_order.pk}-t")
+    payment = services.start_payment(ready, "0712 345 678", provider=provider)
+    assert provider.initiated == [(ready.pk, "254712345678", 350)]
+    assert (payment.provider, payment.provider_ref, payment.reference) == ("intasend", "INV-1", f"subra-{ready.pk}-t")
     assert (payment.status, payment.amount_kes) == ("pending", 350)
-    assert payment.raw_init == {"invoice": {"invoice_id": "INV-1"}}
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAYMENT_PENDING
-    assert quoted_order.user.mpesa_phone == "254712345678"
+    ready.refresh_from_db()
+    assert ready.status == S.READY and not ready.is_paid
+    assert ready.events.last().note == "M-Pesa prompt sent to 254712345678 via intasend"
+    assert ready.user.mpesa_phone == "254712345678"
 
 
-def test_start_payment_rejects_bad_phone(quoted_order, enqueued):
+def test_start_payment_rejects_bad_phone(ready):
     with pytest.raises(services.PaymentError):
-        services.start_payment(quoted_order, "12345", provider=FakeProvider())
+        services.start_payment(ready, "12345", provider=FakeProvider())
 
 
-def test_start_payment_needs_a_payable_order(quoted_order, enqueued):
-    pending_payment(quoted_order)
+@pytest.mark.parametrize("status", [S.QUOTED, S.QUEUED, S.PROCESSING, S.RERENDERING, S.FAILED, S.EXPIRED])
+def test_only_a_ready_deck_can_be_paid_for(order_factory, status):
     with pytest.raises(services.PaymentError):
-        services.start_payment(quoted_order, "0712345678", provider=FakeProvider(ref="INV-2"))
+        pending_payment(order_factory(status=status))
 
 
-def test_failed_push_leaves_order_quoted(quoted_order, enqueued):
+def test_a_paid_deck_cant_be_paid_for_again(order_factory):
     with pytest.raises(services.PaymentError):
-        services.start_payment(quoted_order, "0712345678", provider=FakeProvider(fail=True))
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.QUOTED
+        pending_payment(order_factory(status=S.READY, paid_at=timezone.now()))
+
+
+def test_one_payment_at_a_time(ready):
+    pending_payment(ready)
+    with pytest.raises(services.PaymentError):
+        pending_payment(ready, ref="INV-2")
+
+
+def test_failed_push_creates_no_payment(ready):
+    with pytest.raises(services.PaymentError):
+        services.start_payment(ready, "0712345678", provider=FakeProvider(fail=True))
     assert not Payment.objects.exists()
 
 
 # --- callbacks --------------------------------------------------------------
 
-def test_paid_callback_marks_paid_logs_fee_and_starts_processing(quoted_order, enqueued, django_capture_on_commit_callbacks):
-    pending_payment(quoted_order)
-    with django_capture_on_commit_callbacks(execute=True):
-        payment = callback(ref="INV-1")
+def test_paid_callback_unlocks_the_download_for_7_days(ready):
+    pending_payment(ready)
+    payment = callback(ref="INV-1")
     assert (payment.status, payment.provider_receipt) == ("paid", "SJK1ABC2DE")
     assert payment.fee_kes == Decimal("15.75") and not payment.fee_estimated
     assert payment.raw_callbacks == [{"state": "paid", "ref": "INV-1"}]
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAID
-    assert enqueued == [quoted_order.pk]
+    ready.refresh_from_db()
+    assert ready.is_paid and ready.status == S.READY
+    assert timedelta(days=6, hours=23) < ready.expires_at - timezone.now() <= timedelta(days=7)
+    assert ready.events.last().note == "Paid, M-Pesa receipt SJK1ABC2DE"
 
 
-def test_missing_fee_is_estimated(quoted_order, enqueued, settings):
-    settings.PAYMENT_FEE_RATE = 0.045
-    pending_payment(quoted_order)
+def test_missing_fee_is_estimated(ready, settings):
+    settings.PAYMENT_FEE_RATE = 0.015
+    pending_payment(ready)
     payment = callback(ref="INV-1", fee="0.00")
-    assert payment.fee_kes == Decimal("15.75") and payment.fee_estimated
+    assert payment.fee_kes == Decimal("5.25") and payment.fee_estimated
 
 
-def test_duplicate_callback_changes_nothing(quoted_order, enqueued, django_capture_on_commit_callbacks):
-    pending_payment(quoted_order)
-    with django_capture_on_commit_callbacks(execute=True):
-        callback(ref="INV-1")
-        payment = callback(ref="INV-1", receipt="OTHER")
+def test_duplicate_callback_changes_nothing(ready):
+    pending_payment(ready)
+    callback(ref="INV-1")
+    ready.refresh_from_db()
+    paid_at = ready.paid_at
+    payment = callback(ref="INV-1", receipt="OTHER")
     assert payment.provider_receipt == "SJK1ABC2DE"
     assert payment.callback_count == 2 and len(payment.raw_callbacks) == 2
-    assert enqueued == [quoted_order.pk]
-    assert quoted_order.events.filter(to_status=S.PAID).count() == 1
+    ready.refresh_from_db()
+    assert ready.paid_at == paid_at
+    assert ready.events.filter(note__startswith="Paid").count() == 1
+    assert mail.outbox == []
 
 
-def test_pending_callback_changes_nothing(quoted_order, enqueued):
-    pending_payment(quoted_order)
-    payment = callback(ref="INV-1", state="pending")
-    assert payment.status == "pending"
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAYMENT_PENDING
+def test_pending_callback_changes_nothing(ready):
+    pending_payment(ready)
+    assert callback(ref="INV-1", state="pending").status == "pending"
+    ready.refresh_from_db()
+    assert not ready.is_paid
 
 
-def test_failed_callback_marks_order_payment_failed(quoted_order, enqueued):
-    pending_payment(quoted_order)
+def test_failed_callback_leaves_the_deck_ready_to_pay_again(ready):
+    pending_payment(ready)
     payment = callback(ref="INV-1", state="failed", code="1032", reason="Request cancelled by user")
     assert payment.status == "failed" and payment.result_code == "1032"
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAYMENT_FAILED
-    assert enqueued == []
+    ready.refresh_from_db()
+    assert ready.status == S.READY and not ready.is_paid and ready.can_pay
 
 
-def test_amount_mismatch_is_not_paid_and_alerts_admin(quoted_order, enqueued):
-    pending_payment(quoted_order)
+def test_amount_mismatch_is_not_paid_and_alerts_admin(ready):
+    pending_payment(ready)
     payment = callback(ref="INV-1", amount="1")
     assert payment.status == "failed"
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAYMENT_FAILED
+    ready.refresh_from_db()
+    assert not ready.is_paid
     assert "amount" in mail.outbox[0].body.lower()
 
 
-def test_paid_event_without_an_amount_is_not_trusted(quoted_order, enqueued):
-    pending_payment(quoted_order)
-    payment = callback(ref="INV-1", amount=None)
-    assert payment.status == "pending"
+def test_paid_event_without_an_amount_is_not_trusted(ready):
+    pending_payment(ready)
+    assert callback(ref="INV-1", amount=None).status == "pending"
 
 
-def test_reference_mismatch_is_ignored(quoted_order, enqueued):
-    pending_payment(quoted_order)
-    payment = callback(ref="INV-1", reference="subra-999-x")
-    assert payment.status == "pending"
+def test_reference_mismatch_is_ignored(ready):
+    pending_payment(ready)
+    assert callback(ref="INV-1", reference="subra-999-x").status == "pending"
 
 
-def test_unknown_ref_is_ignored(quoted_order, enqueued):
+def test_unknown_ref_is_ignored(db):
     assert callback(ref="nope") is None
 
 
-def test_late_success_after_failure_still_pays(quoted_order, enqueued, django_capture_on_commit_callbacks):
-    payment = pending_payment(quoted_order)
+def test_late_success_after_a_timeout_still_pays(ready):
+    payment = pending_payment(ready)
     services.check_payment(payment, provider=FakeProvider(status=event(state="failed", code="1037", reason="timeout")))
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAYMENT_FAILED
-    with django_capture_on_commit_callbacks(execute=True):
-        payment = callback(ref="INV-1")
-    quoted_order.refresh_from_db()
-    assert payment.status == "paid" and quoted_order.status == S.PAID
-    assert enqueued == [quoted_order.pk]
+    payment = callback(ref="INV-1")
+    ready.refresh_from_db()
+    assert payment.status == "paid" and ready.is_paid
 
 
-def test_second_successful_payment_is_flagged_for_refund(quoted_order, enqueued, django_capture_on_commit_callbacks):
-    first = pending_payment(quoted_order, ref="INV-1")
+def test_second_successful_payment_is_flagged_for_refund(ready):
+    first = pending_payment(ready, ref="INV-1")
     services.check_payment(first, provider=FakeProvider(status=event(state="failed", code="1037")))
-    services.start_payment(quoted_order, "0712345678", provider=FakeProvider(ref="INV-2"))
-    with django_capture_on_commit_callbacks(execute=True):
-        callback(ref="INV-2", receipt="R2")
-        dup = callback(ref="INV-1", receipt="R1")
+    services.start_payment(ready, "0712345678", provider=FakeProvider(ref="INV-2"))
+    callback(ref="INV-2", receipt="R2")
+    dup = callback(ref="INV-1", receipt="R1")
     assert dup.status == "paid" and "refund" in dup.result_desc.lower()
-    assert enqueued == [quoted_order.pk]
-    assert any("refund" in m.subject.lower() for m in mail.outbox)
+    assert any("Duplicate" in m.subject and "refund" in m.subject.lower() for m in mail.outbox)
+
+
+def test_payment_for_a_deleted_deck_is_flagged_for_refund(ready):
+    pending_payment(ready)
+    Order.objects.filter(pk=ready.pk).update(status=S.EXPIRED, files_deleted_at=timezone.now())
+    payment = callback(ref="INV-1")
+    assert payment.status == "paid" and "refund" in payment.result_desc.lower()
+    ready.refresh_from_db()
+    assert not ready.is_paid
+    assert any("deleted deck" in m.subject for m in mail.outbox)
 
 
 # --- status checks ----------------------------------------------------------
 
-def test_status_check_pending_changes_nothing(quoted_order, enqueued):
-    payment = pending_payment(quoted_order)
+def test_status_check_pending_changes_nothing(ready):
+    payment = pending_payment(ready)
     assert services.check_payment(payment, provider=FakeProvider(status=event(state="pending"))) == "pending"
     payment.refresh_from_db()
     assert payment.status == "pending" and payment.status_checks == 1 and payment.callback_count == 0
 
 
-def test_status_check_success_marks_paid(quoted_order, enqueued, django_capture_on_commit_callbacks):
-    payment = pending_payment(quoted_order)
-    with django_capture_on_commit_callbacks(execute=True):
-        assert services.check_payment(payment, provider=FakeProvider(status=event())) == "paid"
-    quoted_order.refresh_from_db()
-    assert quoted_order.status == S.PAID
+def test_status_check_success_marks_paid(ready):
+    payment = pending_payment(ready)
+    assert services.check_payment(payment, provider=FakeProvider(status=event())) == "paid"
+    ready.refresh_from_db()
+    assert ready.is_paid
 
 
-def test_status_check_outage_keeps_waiting(quoted_order, enqueued):
-    payment = pending_payment(quoted_order)
+def test_status_check_outage_keeps_waiting(ready):
+    payment = pending_payment(ready)
     assert services.check_payment(payment, provider=FakeProvider(status=ProviderError("down"))) == "pending"
 
 
@@ -221,8 +238,8 @@ def intasend_payload(payment, **extra):
     return data
 
 
-def test_webhook_rejects_a_wrong_challenge(client, quoted_order, enqueued):
-    payment = pending_payment(quoted_order)
+def test_webhook_rejects_a_wrong_challenge(client, ready):
+    payment = pending_payment(ready)
     resp = client.post("/billing/webhooks/intasend/", data=json.dumps(intasend_payload(payment, challenge="x")),
                        content_type="application/json")
     assert resp.status_code == 403
@@ -230,14 +247,15 @@ def test_webhook_rejects_a_wrong_challenge(client, quoted_order, enqueued):
     assert payment.status == "pending" and payment.raw_callbacks == []
 
 
-def test_webhook_marks_paid(client, quoted_order, enqueued):
-    payment = pending_payment(quoted_order)
+def test_webhook_marks_paid(client, ready):
+    payment = pending_payment(ready)
     resp = client.post("/billing/webhooks/intasend/", data=json.dumps(intasend_payload(payment)),
                        content_type="application/json")
     assert resp.status_code == 200
     payment.refresh_from_db()
     assert (payment.status, payment.provider_receipt, payment.fee_kes) == ("paid", "SJK1ABC2DE", Decimal("15.75"))
-    assert payment.raw_callbacks[0]["invoice_id"] == "INV-1"
+    ready.refresh_from_db()
+    assert ready.is_paid
 
 
 def test_webhook_rejects_malformed_json(client, db):

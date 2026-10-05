@@ -62,6 +62,10 @@ class IntaSendProvider:
             webhook_secret=settings.INTASEND_WEBHOOK_SECRET,
         )
 
+    @property
+    def configured(self):
+        return bool(self.secret_key and self.publishable_key)
+
     def _post(self, path, body):
         try:
             resp = self.session.post(

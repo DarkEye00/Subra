@@ -34,12 +34,13 @@ class PriceTier(models.Model):
 
 
 class Payment(models.Model):
-    """One payment attempt through a provider (IntaSend at launch). Provider-neutral fields."""
+    """One payment attempt through a provider (Paystack at launch). Provider-neutral fields."""
 
     class Status(models.TextChoices):
         PENDING = "pending", "Pending"
         PAID = "paid", "Paid"
         FAILED = "failed", "Failed"
+        REFUNDED = "refunded", "Refunded"
 
     order = models.ForeignKey("orders.Order", on_delete=models.PROTECT, related_name="payments")
     provider = models.CharField(max_length=20, default="intasend")
@@ -51,6 +52,7 @@ class Payment(models.Model):
     fee_kes = models.DecimalField("fee (KES)", max_digits=10, decimal_places=2, default=0)
     fee_estimated = models.BooleanField(default=False, help_text="The provider didn't report its fee; estimated")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
+    refunded_at = models.DateTimeField(null=True, blank=True)
     result_code = models.CharField(max_length=32, blank=True)
     result_desc = models.CharField(max_length=255, blank=True)
     raw_init = models.JSONField(null=True, blank=True)

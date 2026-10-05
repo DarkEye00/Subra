@@ -1,0 +1,7 @@
+{% if order.can_discard %}
+<form method="post" action="{% url 'orders:discard' order.public_id %}" class="mt-8 text-center"
+      onsubmit="return confirm('Discard this deck? Its files are deleted straight away.')">
+  {% csrf_token %}
+  <button class="btn-quiet text-sm">Discard this deck</button>
+</form>
+{% endif %}

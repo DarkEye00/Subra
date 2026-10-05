@@ -1,4 +1,5 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.utils import timezone
 
 from .models import Payment, PriceTier
 
@@ -17,3 +18,12 @@ class PaymentAdmin(admin.ModelAdmin):
     list_filter = ("provider", "status", "result_code")
     search_fields = ("phone", "provider_receipt", "provider_ref", "reference", "order__user__email")
     readonly_fields = [f.name for f in Payment._meta.fields]
+    actions = ["mark_refunded"]
+
+    @admin.action(description="Mark refunded (after refunding via M-Pesa)")
+    def mark_refunded(self, request, queryset):
+        now = timezone.now()
+        done = queryset.filter(status=Payment.Status.PAID).update(status=Payment.Status.REFUNDED, refunded_at=now,
+                                                                  updated_at=now)
+        self.message_user(request, f"{done} payment(s) marked refunded.",
+                          messages.SUCCESS if done else messages.WARNING)

@@ -179,6 +179,7 @@ USD_KES_RATE = float(env("USD_KES_RATE", "129.20"))
 CARD_FX_MARKUP = float(env("CARD_FX_MARKUP", "0.03"))
 PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.045"))  # estimate when the provider reports no fee
 FILE_RETENTION_DAYS = int(env("FILE_RETENTION_DAYS", "7"))
+UNPAID_RETENTION_HOURS = int(env("UNPAID_RETENTION_HOURS", "48"))  # quoted, unpaid and failed decks (Amendment 2)
 # Privacy and terms pages show a "draft" banner until Joe has reviewed them (build plan, section 10).
 LEGAL_PAGES_REVIEWED = env_bool("LEGAL_PAGES_REVIEWED", False)
 SUPPORT_EMAIL = env("SUPPORT_EMAIL", "support@example.co.ke")

@@ -6,6 +6,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from billing.models import Payment
 from polisher.pipeline import PlannerUnavailable
 
 from . import processing, spend
@@ -13,14 +14,14 @@ from .models import Order
 
 log = logging.getLogger(__name__)
 S = Order.Status
-ACTIVE = {S.PAYMENT_PENDING, S.PAID, S.PROCESSING}
+IN_FLIGHT = set(Order.IN_FLIGHT)  # never expired: work is waiting or running
 
 
 @shared_task(bind=True, max_retries=12)
 def process_order(self, order_id):
     with transaction.atomic():
         order = Order.objects.select_for_update().filter(pk=order_id).first()
-        if order is None or order.status != S.PAID:
+        if order is None or order.status != S.QUEUED:
             return "skipped"
         if spend.cap_reached():
             order.waiting_for_capacity = True
@@ -30,39 +31,38 @@ def process_order(self, order_id):
             except spend.SpendCapReached:
                 pass
             return "queued"
-        run = 2 if order.rerun_used else 1
-        order.transition(S.PROCESSING, note=f"run {run}", waiting_for_capacity=False)
+        order.transition(S.PROCESSING, note="Generating", waiting_for_capacity=False)
 
     try:
-        result = processing.run_polish(order, run)
+        result = processing.run_polish(order)
     except spend.SpendCapReached:
-        order.transition(S.PAID, note="Daily AI spend cap reached mid-job", waiting_for_capacity=True)
+        order.transition(S.QUEUED, note="Daily AI spend cap reached mid-job", waiting_for_capacity=True)
         return "queued"
     except PlannerUnavailable as e:
-        order.transition(S.PAID, note=f"AI provider unavailable: {e}"[:500], waiting_for_capacity=True)
+        order.transition(S.QUEUED, note=f"AI provider unavailable: {e}"[:500], waiting_for_capacity=True)
         if self.request.called_directly or self.request.is_eager:
             return "deferred"
         raise self.retry(exc=e, countdown=300)
     except Exception as e:
         log.exception("Processing crashed for order %s", order_id)
         order.refresh_from_db()
-        processing.fail(order, run, f"Internal error: {type(e).__name__}: {e}")
+        processing.fail(order, f"Internal error: {type(e).__name__}: {e}")
         return "failed"
 
     if not result.ok:
-        processing.fail(order, run, result.failure or "Verification failed")
+        processing.fail(order, result.failure or "Verification failed")
         return "failed"
     return "done"
 
 
 @shared_task
 def release_queued_orders():
-    """Start paid orders that were waiting (spend cap, AI outage) or whose task was lost."""
+    """Start queued orders that were waiting (spend cap, AI outage) or whose task was lost."""
     if spend.cap_reached():
         return 0
     stale = timezone.now() - timedelta(minutes=10)
     waiting = Q(waiting_for_capacity=True) | Q(updated_at__lt=stale)
-    ids = list(Order.objects.filter(waiting, status=S.PAID).values_list("pk", flat=True))
+    ids = list(Order.objects.filter(waiting, status=S.QUEUED).values_list("pk", flat=True))
     for pk in ids:
         process_order.delay(pk)
     return len(ids)
@@ -70,10 +70,13 @@ def release_queued_orders():
 
 @shared_task
 def delete_expired_files():
-    """Delete originals, results, and previews after FILE_RETENTION_DAYS."""
+    """Delete originals, results and previews once expires_at passes (48 hours unpaid, 7 days after payment)."""
     count = 0
-    expired = Order.objects.filter(expires_at__lte=timezone.now(), files_deleted_at__isnull=True).exclude(
-        status__in=ACTIVE
+    expired = (
+        Order.objects.filter(expires_at__lte=timezone.now(), files_deleted_at__isnull=True)
+        .exclude(status__in=IN_FLIGHT)
+        .exclude(payments__status=Payment.Status.PENDING)  # wait for the payment sweep to settle it
+        .distinct()
     )
     for order in expired:
         with transaction.atomic():

@@ -1,5 +1,4 @@
 import os
-import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,18 +8,21 @@ from django.core.files.storage import default_storage
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from pptx import Presentation
-from pptx.util import Inches
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
-from deckbuilder import build_rich_deck, build_simple_deck  # noqa: E402
-
-from orders import processing, services, spend, tasks  # noqa: E402
-from orders.models import AIJob, DailySpend, Order, Theme  # noqa: E402
-from polisher.ai import Usage  # noqa: E402
-from polisher.heuristic import plan_deck  # noqa: E402
-from polisher.planner import PlanAttempt  # noqa: E402
+from billing.models import Payment
+from deckbuilder import build_rich_deck, build_simple_deck
+from orders import processing, services, spend, tasks
+from orders.models import AIJob, DailySpend, Order
+from polisher.ai import Usage
+from polisher.heuristic import plan_deck
+from polisher.planner import PlanAttempt
 
 S = Order.Status
+
+
+@pytest.fixture(autouse=True)
+def _previews(fake_previews):
+    """Every test here fakes LibreOffice."""
 
 
 def upload(path, name="Q3 review.pptx"):
@@ -28,27 +30,9 @@ def upload(path, name="Q3 review.pptx"):
                               content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation")
 
 
-@pytest.fixture(autouse=True)
-def fast_previews(monkeypatch, tmp_path):
-    """LibreOffice is slow; fake two thumbnails unless a test asks for the real thing."""
-    def fake(pptx, out_dir, dpi=60):
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        paths = []
-        for i in (1, 2):
-            p = out_dir / f"slide-{i}.png"
-            p.write_bytes(b"\x89PNG fake")
-            paths.append(p)
-        return paths
-    monkeypatch.setattr(processing, "render_previews", fake)
-
-
 @pytest.fixture
-def paid_order(user, tmp_path):
-    order = services.create_order(user, upload(build_rich_deck(tmp_path / "rich.pptx")))
-    order.transition(S.PAYMENT_PENDING)
-    order.transition(S.PAID)
-    return order
+def queued_order(user, tmp_path):
+    return services.start_generation(services.create_order(user, upload(build_rich_deck(tmp_path / "rich.pptx"))))
 
 
 class CostlyPlanner:
@@ -76,6 +60,7 @@ def test_upload_creates_a_quoted_order(user, tmp_path):
     assert order.original_name == "Q3 review.pptx"
     assert default_storage.exists(order.original_file.name)
     assert order.theme.slug == "navy"
+    assert order.events.get().note == "7 slides, Small tier, KES 200"
 
 
 def test_upload_rejects_non_pptx(user, tmp_path):
@@ -115,129 +100,107 @@ def test_media_decks_get_the_larger_upload_limit(user, tmp_path, settings):
         services.create_order(user, upload(build_rich_deck(tmp_path / "rich.pptx")))
 
 
-# --- processing -------------------------------------------------------------
+# --- generation -------------------------------------------------------------
 
-def test_paid_order_is_polished(paid_order):
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.DONE, paid_order.failure_reason
-    with default_storage.open(paid_order.result_file.name, "rb") as f:
+def test_generation_produces_a_ready_deck_that_isnt_paid_for(queued_order):
+    tasks.process_order(queued_order.pk)
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.READY, order.failure_reason
+    assert not order.is_paid
+    with default_storage.open(order.result_file.name, "rb") as f:
         assert len(Presentation(f).slides) == 7
-    assert len(paid_order.preview_images) == 2
-    assert all(default_storage.exists(n) for n in paid_order.preview_images)
-    assert paid_order.expires_at > timezone.now() + timedelta(days=6)
-    assert [e.to_status for e in paid_order.events.all()][-2:] == [S.PROCESSING, S.DONE]
+    assert len(order.preview_images) == 2 and all(default_storage.exists(n) for n in order.preview_images)
+    assert order.plan and len(order.plan["slides"]) == 7
+    assert timedelta(hours=47) < order.expires_at - timezone.now() <= timedelta(hours=48)
+    assert [e.to_status for e in order.events.all()][-2:] == [S.PROCESSING, S.READY]
 
 
-def test_ai_cost_is_logged_per_attempt_with_fx(paid_order, monkeypatch, settings):
+def test_ai_cost_is_logged_per_attempt_with_fx(queued_order, monkeypatch, settings):
     settings.USD_KES_RATE, settings.CARD_FX_MARKUP = 100.0, 0.03
     use_planners(monkeypatch, CostlyPlanner(["bad", "good"]))
-    tasks.process_order(paid_order.pk)
-    jobs = list(AIJob.objects.filter(order=paid_order))
-    assert [(j.attempt_number, j.model, j.input_tokens) for j in jobs] == [(1, "claude-sonnet-5", 5000), (2, "claude-sonnet-5", 5000)]
+    tasks.process_order(queued_order.pk)
+    jobs = list(AIJob.objects.filter(order=queued_order))
+    assert [(j.attempt_number, j.model, j.input_tokens) for j in jobs] == [(1, "claude-sonnet-5", 5000),
+                                                                          (2, "claude-sonnet-5", 5000)]
     assert float(jobs[0].cost_kes) == pytest.approx(0.05 * 100 * 1.03)
     assert jobs[0].verification_passed is None and jobs[1].verification_passed is True
     assert float(DailySpend.objects.get().total_cost_usd) == pytest.approx(0.10)
-    paid_order.refresh_from_db()
-    assert float(paid_order.ai_cost_kes) == pytest.approx(0.10 * 103, abs=0.01)
+    assert float(Order.objects.get(pk=queued_order.pk).ai_cost_kes) == pytest.approx(0.10 * 103, abs=0.01)
 
 
-def test_failed_processing_goes_to_refund_pending(paid_order, monkeypatch):
+def test_failed_generation_costs_the_customer_nothing_and_alerts_admins(queued_order, monkeypatch, settings):
+    settings.USD_KES_RATE, settings.CARD_FX_MARKUP = 100.0, 0.03
     use_planners(monkeypatch, CostlyPlanner(["bad", "bad"]), CostlyPlanner(["bad"], model="claude-opus-5-5"))
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.REFUND_PENDING
-    assert paid_order.failure_reason
-    assert AIJob.objects.filter(order=paid_order).count() == 3
-    assert any("refund" in m.subject.lower() for m in mail.outbox)
+    tasks.process_order(queued_order.pk)
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.FAILED and order.failure_reason
+    assert not Payment.objects.exists()
+    assert timedelta(hours=47) < order.expires_at - timezone.now() <= timedelta(hours=48)
+    alert = next(m for m in mail.outbox if "failed to generate" in m.subject)
+    assert "wanjiku@example.co.ke" in alert.body and "3 attempt(s)" in alert.body
+    assert "AI cost: KES 15.45" in alert.body and "no refund" in alert.body
 
 
-def test_spend_cap_queues_paid_orders(paid_order, settings):
+def test_spend_cap_keeps_orders_queued(queued_order, settings):
     settings.AI_DAILY_CAP_USD = 1.0
     spend.record_spend(1.5)
-    tasks.process_order(paid_order.pk)
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.PAID and paid_order.waiting_for_capacity
+    tasks.process_order(queued_order.pk)
+    tasks.process_order(queued_order.pk)
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.QUEUED and order.waiting_for_capacity
     assert len([m for m in mail.outbox if "cap" in m.subject.lower()]) == 1  # alert once a day
 
 
-def test_spend_cap_hit_mid_job_requeues(paid_order, monkeypatch, settings):
+def test_spend_cap_hit_mid_job_requeues(queued_order, monkeypatch, settings):
     settings.AI_DAILY_CAP_USD = 0.06
     use_planners(monkeypatch, CostlyPlanner(["bad", "good"], cost=0.07))
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.PAID and paid_order.waiting_for_capacity
-    assert AIJob.objects.filter(order=paid_order).count() == 1
+    tasks.process_order(queued_order.pk)
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.QUEUED and order.waiting_for_capacity
+    assert AIJob.objects.filter(order=queued_order).count() == 1
 
 
-def test_queued_orders_are_released_when_capacity_returns(paid_order, settings):
+def test_queued_orders_are_released_when_capacity_returns(queued_order, settings):
     settings.AI_DAILY_CAP_USD = 1.0
     spend.record_spend(1.5)
-    tasks.process_order(paid_order.pk)
+    tasks.process_order(queued_order.pk)
     settings.AI_DAILY_CAP_USD = 5.0
     tasks.release_queued_orders()
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.DONE
-
-
-# --- free re-run ------------------------------------------------------------
-
-def test_free_rerun_with_another_theme(paid_order, django_capture_on_commit_callbacks):
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    first_result = paid_order.result_file.name
-    with django_capture_on_commit_callbacks(execute=True):
-        services.start_rerun(paid_order, Theme.objects.get(slug="slate"))
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.DONE and paid_order.theme.slug == "slate"
-    assert paid_order.rerun_used and not paid_order.can_rerun
-    assert paid_order.result_file.name != first_result
-    assert not default_storage.exists(first_result)
-
-
-def test_failed_rerun_keeps_the_first_result(paid_order, monkeypatch, django_capture_on_commit_callbacks):
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    first_result = paid_order.result_file.name
-    use_planners(monkeypatch, CostlyPlanner(["bad", "bad"]), CostlyPlanner(["bad"]))
-    with django_capture_on_commit_callbacks(execute=True):
-        services.start_rerun(paid_order, Theme.objects.get(slug="slate"))
-    paid_order.refresh_from_db()
-    assert paid_order.status == S.DONE
-    assert paid_order.result_file.name == first_result
-    assert paid_order.can_rerun  # they can try again
-
-
-def test_rerun_only_once(paid_order):
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
-    services.start_rerun(paid_order, Theme.objects.get(slug="slate"))
-    with pytest.raises(services.RerunError):
-        services.start_rerun(paid_order, Theme.objects.get(slug="savanna"))
+    assert Order.objects.get(pk=queued_order.pk).status == S.READY
 
 
 # --- file retention ---------------------------------------------------------
 
-def test_expired_files_are_really_deleted(paid_order):
-    tasks.process_order(paid_order.pk)
-    paid_order.refresh_from_db()
+def test_expired_decks_are_really_deleted(ready_order):
     paths = [default_storage.path(n) for n in
-             [paid_order.original_file.name, paid_order.result_file.name, *paid_order.preview_images]]
+             [ready_order.original_file.name, ready_order.result_file.name, *ready_order.preview_images]]
     assert all(os.path.exists(p) for p in paths)
-    Order.objects.filter(pk=paid_order.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
+    Order.objects.filter(pk=ready_order.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
     tasks.delete_expired_files()
-    paid_order.refresh_from_db()
+    ready_order.refresh_from_db()
     assert not any(os.path.exists(p) for p in paths)
-    assert paid_order.status == S.EXPIRED and paid_order.files_deleted_at
-    assert paid_order.preview_images == [] and not paid_order.result_file and not paid_order.original_file
+    assert ready_order.status == S.EXPIRED and ready_order.files_deleted_at
+    assert ready_order.preview_images == [] and not ready_order.result_file and not ready_order.original_file
 
 
-def test_unexpired_and_in_flight_orders_keep_their_files(paid_order, user, tmp_path):
-    Order.objects.filter(pk=paid_order.pk).update(expires_at=timezone.now() - timedelta(minutes=1),
-                                                  status=S.PROCESSING)
-    fresh = services.create_order(user, upload(build_rich_deck(tmp_path / "f.pptx")))
+@pytest.mark.parametrize("status", [S.QUEUED, S.PROCESSING, S.RERENDERING])
+def test_decks_being_worked_on_keep_their_files(ready_order, status):
+    Order.objects.filter(pk=ready_order.pk).update(expires_at=timezone.now() - timedelta(minutes=1), status=status)
     tasks.delete_expired_files()
-    for o in (paid_order, fresh):
-        o.refresh_from_db()
-        assert default_storage.exists(o.original_file.name)
+    ready_order.refresh_from_db()
+    assert default_storage.exists(ready_order.original_file.name) and not ready_order.files_deleted_at
+
+
+def test_a_pending_payment_holds_off_deletion(ready_order):
+    Payment.objects.create(order=ready_order, provider="intasend", provider_ref="INV-1", phone="254712345678",
+                           amount_kes=200)
+    Order.objects.filter(pk=ready_order.pk).update(expires_at=timezone.now() - timedelta(minutes=1))
+    tasks.delete_expired_files()
+    ready_order.refresh_from_db()
+    assert ready_order.status == S.READY and not ready_order.files_deleted_at
+
+
+def test_unexpired_decks_keep_their_files(ready_order):
+    tasks.delete_expired_files()
+    ready_order.refresh_from_db()
+    assert not ready_order.files_deleted_at

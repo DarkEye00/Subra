@@ -7,7 +7,7 @@ from django.db import models, transaction
 from django.templatetags.static import static
 from django.utils import timezone
 
-from billing.models import PriceTier, ProductType
+from billing.models import Payment, PriceTier, ProductType
 
 
 class Theme(models.Model):
@@ -50,33 +50,29 @@ class InvalidTransition(Exception):
 
 
 class Order(models.Model):
+    """Processing status and payment are separate tracks (Amendment 2): customers see the deck, then pay."""
+
     class Status(models.TextChoices):
-        UPLOADED = "uploaded", "Uploaded"
-        QUOTED = "quoted", "Quoted"
-        PAYMENT_PENDING = "payment_pending", "Waiting for M-Pesa"
-        PAYMENT_FAILED = "payment_failed", "Payment failed"
-        PAID = "paid", "Paid, in queue"
+        QUOTED = "quoted", "Ready to polish"
+        QUEUED = "queued", "In queue"
         PROCESSING = "processing", "Polishing"
-        DONE = "done", "Ready"
-        FAILED = "failed", "Failed"
-        REFUND_PENDING = "refund_pending", "Refund pending"
-        REFUNDED = "refunded", "Refunded"
+        READY = "ready", "Ready"
+        RERENDERING = "rerendering", "Switching theme"
+        FAILED = "failed", "Couldn't polish"
         EXPIRED = "expired", "Expired (files deleted)"
 
     S = Status
     TRANSITIONS = {
-        S.UPLOADED: {S.QUOTED, S.EXPIRED},
-        S.QUOTED: {S.PAYMENT_PENDING, S.EXPIRED},
-        S.PAYMENT_PENDING: {S.PAID, S.PAYMENT_FAILED},
-        S.PAYMENT_FAILED: {S.PAYMENT_PENDING, S.EXPIRED},
-        S.PAID: {S.PROCESSING},
-        S.PROCESSING: {S.DONE, S.FAILED, S.PAID},  # back to PAID = re-queued (spend cap or AI outage)
-        S.DONE: {S.PAID, S.EXPIRED},  # back to PAID = the free re-run, queued
-        S.FAILED: {S.REFUND_PENDING},
-        S.REFUND_PENDING: {S.REFUNDED},
-        S.REFUNDED: {S.EXPIRED},
+        S.QUOTED: {S.QUEUED, S.EXPIRED},
+        S.QUEUED: {S.PROCESSING},
+        S.PROCESSING: {S.READY, S.FAILED, S.QUEUED},  # back to QUEUED = spend cap or AI outage
+        S.READY: {S.RERENDERING, S.EXPIRED},
+        S.RERENDERING: {S.READY},
+        S.FAILED: {S.EXPIRED},
         S.EXPIRED: set(),
     }
+    UNPAID_WORK = (S.QUEUED, S.PROCESSING, S.READY, S.RERENDERING)  # counts toward one unpaid deck per account
+    IN_FLIGHT = (S.QUEUED, S.PROCESSING, S.RERENDERING)
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="orders")
@@ -87,12 +83,14 @@ class Order(models.Model):
     tier = models.ForeignKey(PriceTier, on_delete=models.PROTECT, null=True, blank=True)
     price_kes = models.PositiveIntegerField(default=0)
     theme = models.ForeignKey(Theme, on_delete=models.PROTECT, null=True, blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.UPLOADED)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUOTED)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    plan = models.JSONField(null=True, blank=True)  # the verified layout plan; theme switches re-render it
     result_file = models.FileField(upload_to=result_upload_path, blank=True)
     preview_images = models.JSONField(default=list, blank=True)  # storage names, in slide order
     overflow_slides = models.JSONField(default=list, blank=True)
     locked_summary = models.JSONField(default=dict, blank=True)  # locked objects found at upload (Amendment 1C)
-    rerun_used = models.BooleanField(default=False)
+    switch_error = models.CharField(max_length=200, blank=True)
     waiting_for_capacity = models.BooleanField(default=False)
     failure_reason = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -109,7 +107,7 @@ class Order(models.Model):
 
     def save(self, *args, **kwargs):
         if self.expires_at is None:
-            self.expires_at = timezone.now() + timedelta(days=settings.FILE_RETENTION_DAYS)
+            self.expires_at = timezone.now() + timedelta(hours=settings.UNPAID_RETENTION_HOURS)
         super().save(*args, **kwargs)
 
     def can_transition(self, to):
@@ -126,6 +124,33 @@ class Order(models.Model):
                 setattr(self, k, v)
             self.save()
             OrderEvent.objects.create(order=self, from_status=from_status, to_status=to, note=note[:500])
+
+    def log(self, note):
+        """Record an event that doesn't change the status, such as a payment."""
+        OrderEvent.objects.create(order=self, from_status=self.status, to_status=self.status, note=note[:500])
+
+    # --- payment ------------------------------------------------------------
+
+    @property
+    def is_paid(self):
+        return self.paid_at is not None
+
+    @property
+    def has_pending_payment(self):
+        return self.payments.filter(status=Payment.Status.PENDING).exists()
+
+    @property
+    def can_pay(self):
+        return (self.status == self.Status.READY and not self.is_paid and not self.files_deleted_at
+                and not self.has_pending_payment)
+
+    @property
+    def can_discard(self):
+        if self.is_paid or self.files_deleted_at:
+            return False
+        if self.status in (self.Status.QUOTED, self.Status.FAILED):
+            return True
+        return self.status == self.Status.READY and not self.has_pending_payment
 
     # --- money --------------------------------------------------------------
 
@@ -145,10 +170,6 @@ class Order(models.Model):
     def margin_kes(self):
         """Price minus AI cost and payment provider fees (only meaningful for paid orders)."""
         return Decimal(self.price_kes) - self.ai_cost_kes - self.payment_fees_kes
-
-    @property
-    def is_paid(self):
-        return self.payments.filter(status="paid").exists()
 
     LOCKED_WORDS = {
         "video": "video", "audio": "audio", "ole": "embedded objects", "equation": "equations",
@@ -182,10 +203,6 @@ class Order(models.Model):
             out.append("3D models appear as still images")
         return out
 
-    @property
-    def can_rerun(self):
-        return self.status == self.Status.DONE and not self.rerun_used and not self.files_deleted_at
-
 
 class OrderEvent(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="events")
@@ -202,7 +219,7 @@ class AIJob(models.Model):
     """One planner attempt: tokens, cost, and whether its deck passed verification."""
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="ai_jobs")
-    run = models.PositiveIntegerField(default=1, help_text="1 = first run, 2 = free re-run")
+    run = models.PositiveIntegerField(default=1, help_text="1 = the generation; theme switches make no AI calls")
     attempt_number = models.PositiveIntegerField()
     planner = models.CharField(max_length=20, default="claude")
     model = models.CharField(max_length=64, blank=True)

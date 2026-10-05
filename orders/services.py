@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import transaction
 
@@ -10,7 +11,8 @@ from polisher.extract import extract_deck
 from polisher.pipeline import UnsupportedContentError
 from polisher.validate import MESSAGES, ValidationError, validate_file
 
-from .models import Order, Theme
+from . import processing
+from .models import Order, OrderEvent, Theme
 
 S = Order.Status
 
@@ -21,8 +23,13 @@ class UploadError(Exception):
         self.message = message
 
 
-class RerunError(Exception):
-    pass
+class GenerationError(Exception):
+    """Why a deck can't be sent for polishing, in words the customer sees."""
+
+    def __init__(self, message, blocking_order=None):
+        super().__init__(message)
+        self.message = message
+        self.blocking_order = blocking_order
 
 
 def default_theme():
@@ -65,25 +72,51 @@ def create_order(user, uploaded_file, product_type=ProductType.DECK_POLISH):
             )
             with open(path, "rb") as f:
                 order.original_file.save("original.pptx", File(f), save=True)
-            order.transition(S.QUOTED, note=f"{info.slide_count} slides, {tier.name} tier, KES {tier.price_kes}")
+            OrderEvent.objects.create(order=order, to_status=S.QUOTED,
+                                      note=f"{info.slide_count} slides, {tier.name} tier, KES {tier.price_kes}")
     return order
 
 
 def set_theme(order, theme):
-    if order.status not in (S.QUOTED, S.PAYMENT_FAILED):
-        raise ValueError("The theme can only be changed before payment")
+    """Before polishing only. Afterwards a theme change is a re-render."""
+    if order.status != S.QUOTED:
+        raise ValueError("The theme can only be set here before polishing")
     order.theme = theme
     order.save(update_fields=["theme", "updated_at"])
 
 
-def start_rerun(order, theme):
-    """The one free re-run per paid order: same deck, different theme."""
+def unpaid_work(user, exclude=None):
+    """The customer's deck that has used AI but isn't paid for yet, if any (one at a time)."""
+    orders = Order.objects.filter(user=user, status__in=Order.UNPAID_WORK, paid_at__isnull=True)
+    if exclude is not None:
+        orders = orders.exclude(pk=exclude.pk)
+    return orders.order_by("created_at").first()
+
+
+def start_generation(order, theme=None):
+    """Queue a quoted deck for polishing. Refused while the customer has another unpaid deck."""
+    with transaction.atomic():
+        get_user_model().objects.select_for_update().get(pk=order.user_id)  # one check at a time per customer
+        order = Order.objects.select_for_update().get(pk=order.pk)
+        if order.status != S.QUOTED:
+            raise GenerationError("This deck has already been sent for polishing.")
+        blocking = unpaid_work(order.user, exclude=order)
+        if blocking is not None:
+            raise GenerationError(f"Pay for or discard {blocking.original_name} first.", blocking_order=blocking)
+        theme = theme or order.theme
+        order.transition(S.QUEUED, note=f"Polishing in {theme.slug}", theme=theme)
+        transaction.on_commit(lambda: _enqueue(order))
+    return order
+
+
+def discard_order(order):
+    """Delete an unpaid deck's files now. Raises ValueError if it can't be discarded."""
     with transaction.atomic():
         order = Order.objects.select_for_update().get(pk=order.pk)
-        if not order.can_rerun:
-            raise RerunError("This order has already used its free re-run.")
-        order.transition(S.PAID, note=f"Free re-run with theme {theme.slug}", theme=theme, rerun_used=True)
-        transaction.on_commit(lambda: _enqueue(order))
+        if not order.can_discard:
+            raise ValueError("This deck can't be discarded")
+        processing.delete_order_files(order)
+        order.transition(S.EXPIRED, note="Discarded by customer")
     return order
 
 

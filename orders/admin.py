@@ -1,7 +1,7 @@
 from decimal import Decimal
 
 from django.conf import settings
-from django.contrib import admin, messages
+from django.contrib import admin
 from django.db.models import DecimalField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 
@@ -38,19 +38,33 @@ class OrderEventInline(admin.TabularInline):
     readonly_fields = fields
 
 
+class PaidFilter(admin.SimpleListFilter):
+    title = "payment"
+    parameter_name = "paid"
+
+    def lookups(self, request, model_admin):
+        return [("yes", "Paid"), ("no", "Unpaid")]
+
+    def queryset(self, request, queryset):
+        if self.value() == "yes":
+            return queryset.filter(paid_at__isnull=False)
+        if self.value() == "no":
+            return queryset.filter(paid_at__isnull=True)
+        return queryset
+
+
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("original_name", "user", "status", "slide_count", "price_kes", "ai_cost", "payment_fees",
-                    "margin", "theme", "created_at")
-    list_filter = ("status", "product_type", "theme", "rerun_used", "waiting_for_capacity")
+    list_display = ("original_name", "user", "status", "paid", "slide_count", "price_kes", "ai_cost",
+                    "payment_fees", "margin", "theme", "created_at")
+    list_filter = ("status", PaidFilter, "product_type", "theme", "waiting_for_capacity")
     search_fields = ("original_name", "user__email", "public_id", "payments__provider_receipt", "payments__phone")
     readonly_fields = ("public_id", "user", "product_type", "original_name", "slide_count", "tier", "price_kes",
-                       "status", "original_file", "result_file", "preview_images", "overflow_slides", "rerun_used",
-                       "waiting_for_capacity", "failure_reason", "created_at", "updated_at", "expires_at",
-                       "files_deleted_at", "ai_cost", "payment_fees", "margin")
+                       "status", "paid_at", "original_file", "result_file", "preview_images", "overflow_slides",
+                       "switch_error", "waiting_for_capacity", "failure_reason", "created_at", "updated_at",
+                       "expires_at", "files_deleted_at", "ai_cost", "payment_fees", "margin")
     fields = readonly_fields + ("theme",)
     inlines = [PaymentInline, AIJobInline, OrderEventInline]
-    actions = ["mark_refunded"]
     date_hierarchy = "created_at"
 
     def get_queryset(self, request):
@@ -70,23 +84,17 @@ class OrderAdmin(admin.ModelAdmin):
     def payment_fees(self, obj):
         return f"{getattr(obj, '_fees_kes', obj.payment_fees_kes):.2f}"
 
+    @admin.display(description="Paid", boolean=True, ordering="paid_at")
+    def paid(self, obj):
+        return obj.paid_at is not None
+
     @admin.display(description="Margin (KES)")
     def margin(self, obj):
-        if obj.status in (Order.Status.UPLOADED, Order.Status.QUOTED, Order.Status.PAYMENT_PENDING,
-                          Order.Status.PAYMENT_FAILED, Order.Status.REFUNDED):
+        if obj.paid_at is None:
             return "-"
         cost = getattr(obj, "_ai_cost_kes", obj.ai_cost_kes)
         fees = getattr(obj, "_fees_kes", obj.payment_fees_kes)
         return f"{Decimal(obj.price_kes) - cost - fees:.2f}"
-
-    @admin.action(description="Mark refunded (after refunding via M-Pesa)")
-    def mark_refunded(self, request, queryset):
-        done = 0
-        for order in queryset.filter(status=Order.Status.REFUND_PENDING):
-            order.transition(Order.Status.REFUNDED, note=f"Refund confirmed by {request.user.email}")
-            done += 1
-        self.message_user(request, f"{done} order(s) marked refunded.",
-                          messages.SUCCESS if done else messages.WARNING)
 
 
 @admin.register(AIJob)

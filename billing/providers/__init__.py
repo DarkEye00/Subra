@@ -43,6 +43,7 @@ class PaymentEvent:
 
 class PaymentProvider(Protocol):
     name: str
+    configured: bool
 
     def initiate(self, order, phone) -> InitResult: ...
 
