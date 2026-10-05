@@ -1,11 +1,11 @@
 # SUBRA
 
-Upload a PowerPoint, pay per deck with M-Pesa, and get back a polished, fully editable .pptx that keeps every piece of the original content. The full plan is in [deck-polisher-build-plan.md](deck-polisher-build-plan.md); status is in [PROGRESS.md](PROGRESS.md).
+Upload a PowerPoint, see it redesigned, then pay per deck with M-Pesa to get back a polished, fully editable .pptx that keeps every piece of the original content. The full plan is in [deck-polisher-build-plan.md](deck-polisher-build-plan.md); status is in [PROGRESS.md](PROGRESS.md).
 
 ## How it fits together
 
 - `polisher/` is the core pipeline, a standalone package with no Django dependency: validate → extract → plan (Claude) → render (in place, on a copy of the customer's file) → verify → preview. Video, audio, embedded objects, equations, 3D models, SmartArt and ink are kept exactly and only moved or scaled.
-- `accounts/`, `billing/`, `orders/`, and `core/` make up the Django app: email login, price tiers and M-Pesa payments via IntaSend (behind a provider interface), orders with a logged state machine, Celery tasks, the admin, and privacy/terms pages.
+- `accounts/`, `billing/`, `orders/`, and `core/` make up the Django app: email login, price tiers and M-Pesa payments via Paystack (behind a provider interface; IntaSend and Daraja are alternatives), orders with a logged processing lifecycle and a separate paid flag, Celery tasks, the admin, and privacy/terms pages.
 - `templates/` and `static/` hold the mobile-first frontend (Tailwind v4, htmx).
 
 ## Polish a deck from the command line
@@ -32,7 +32,7 @@ export DJANGO_DEBUG=1 POLISHER_PLANNER=heuristic   # or set ANTHROPIC_API_KEY an
 .venv/bin/python manage.py runserver
 ```
 
-Without `REDIS_URL`, Celery tasks run inline. Without IntaSend keys, DEBUG mode shows a "simulate a successful payment" button on the quote page, so you can try the whole flow.
+Without `REDIS_URL`, Celery tasks run inline. Without payment keys, DEBUG mode shows a "simulate a successful payment" button on a ready deck, so you can try the whole flow.
 
 ## Tests
 
@@ -40,7 +40,9 @@ Without `REDIS_URL`, Celery tasks run inline. Without IntaSend keys, DEBUG mode 
 .venv/bin/pytest
 ```
 
-The tests cover validation (including the 25/100 MB limits), extraction of every locked object type and image case, verification, planning and repair, in-place rendering round trips for every layout and theme, the retry and escalation pipeline, payments (IntaSend webhooks, idempotency, amount mismatches, late and duplicate payments), order processing, the spend cap, file deletion, and the views.
+`scripts/record_paystack_fixtures.py` re-records the Paystack test-mode fixtures (test keys only).
+
+The tests cover validation (including the 25/100 MB limits), extraction of every locked object type and image case, verification, planning and repair, in-place rendering round trips for every layout and theme, the retry and escalation pipeline, payments (Paystack and IntaSend webhooks, signatures, idempotency, amount mismatches, late and duplicate payments, the Starter-limit alerts), generation before payment, theme switching from the saved plan, order processing, the spend cap, file deletion, and the views.
 
 ## Deploy (one DigitalOcean droplet, 4 GB RAM or more)
 
@@ -50,4 +52,4 @@ docker compose up -d --build
 docker compose exec web python manage.py createsuperuser
 ```
 
-Compose runs `web` (gunicorn), `worker` (Celery; runs LibreOffice), `beat` (file deletion, queue release, payment sweeps), `postgres`, `redis`, and `caddy` (automatic HTTPS for `DOMAIN`). Point the domain's DNS at the droplet before starting, because IntaSend webhooks need HTTPS. Register `https://<domain>/billing/webhooks/intasend/` in the IntaSend dashboard with the same challenge as `INTASEND_WEBHOOK_SECRET`.
+Compose runs `web` (gunicorn), `worker` (Celery; runs LibreOffice), `beat` (file deletion, queue release, payment sweeps), `postgres`, `redis`, and `caddy` (automatic HTTPS for `DOMAIN`). Point the domain's DNS at the droplet before starting, because Paystack webhooks need HTTPS. In the Paystack dashboard, set the webhook URL to `https://<domain>/billing/webhooks/paystack/`. Webhooks are verified with `PAYSTACK_SECRET_KEY`, so there's no separate secret.
