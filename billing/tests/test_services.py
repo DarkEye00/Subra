@@ -284,3 +284,14 @@ def test_a_charge_from_elsewhere_on_the_account_sends_no_alert(db):
 def test_an_unrecorded_charge_that_failed_sends_no_alert(db):
     callback(ref="subra-77-ab12cd34", reference="subra-77-ab12cd34", state="failed")
     assert mail.outbox == []
+
+
+def test_a_retried_paid_callback_doesnt_undo_a_refund(ready):
+    """Providers retry webhooks for days; a payment already refunded must stay refunded, with no new alert."""
+    pending_payment(ready)
+    callback(ref="INV-1")
+    Payment.objects.filter(provider_ref="INV-1").update(status="refunded", refunded_at=timezone.now())
+    mail.outbox.clear()
+    payment = callback(ref="INV-1")
+    assert payment.status == "refunded" and payment.refunded_at
+    assert mail.outbox == []

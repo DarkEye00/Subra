@@ -144,8 +144,8 @@ def apply_event(provider_name, event: PaymentEvent, source):
             return payment
 
         # state == "paid"
-        if payment.status == Payment.Status.PAID:
-            return payment  # duplicate
+        if payment.status in (Payment.Status.PAID, Payment.Status.REFUNDED):
+            return payment  # a duplicate, or a retry after the admin refunded it
         if event.amount is None:
             log.warning("Paid event without an amount for payment %s; waiting for confirmation", payment.pk)
             return payment
