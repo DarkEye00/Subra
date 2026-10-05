@@ -16,7 +16,7 @@
         <a href="{% url 'signup' %}" class="btn-primary">Create an account</a>
         <a href="{% url 'login' %}" class="btn-quiet">Sign in</a>
       </div>
-      <p class="mt-4 text-sm text-muted">From KES {{ tiers.0.price_kes|default:"200" }} per deck. Pay with M-Pesa.</p>
+      <p class="mt-4 text-sm text-muted">From KES {{ tiers.0.price_kes|default:"200" }} per deck. Pay with M-Pesa only after you see your redesigned deck.</p>
     {% endif %}
   </div>
 
@@ -57,13 +57,13 @@
     </li>
     <li class="border-t-4 border-ink pt-4">
       <span class="text-4xl font-extrabold text-marigold">2</span>
-      <h3 class="mt-2 text-lg font-bold">Pay with M-Pesa</h3>
-      <p class="mt-1 text-muted">Pick a theme, enter your number, and approve the prompt on your phone.</p>
+      <h3 class="mt-2 text-lg font-bold">See it redesigned</h3>
+      <p class="mt-1 text-muted">Pick a theme. In a few minutes you can look through every slide and try the other themes for free.</p>
     </li>
     <li class="border-t-4 border-ink pt-4">
       <span class="text-4xl font-extrabold text-marigold">3</span>
-      <h3 class="mt-2 text-lg font-bold">Download and edit</h3>
-      <p class="mt-1 text-muted">Most decks are ready in under five minutes. Open them in PowerPoint and keep editing.</p>
+      <h3 class="mt-2 text-lg font-bold">Pay and download</h3>
+      <p class="mt-1 text-muted">Pay with M-Pesa only if you like it. Open the .pptx in PowerPoint and keep editing.</p>
     </li>
   </ol>
 </section>
@@ -71,7 +71,7 @@
 <section class="mt-20 grid gap-10 lg:grid-cols-[1fr_1.4fr]">
   <div>
     <h2 class="text-2xl font-bold tracking-tight">Prices</h2>
-    <p class="mt-2 text-muted">One price per deck, set by its number of slides. Includes one free re-run in a different theme.</p>
+    <p class="mt-2 text-muted">One price per deck, set by its number of slides. Switch between themes as often as you like.</p>
     <table class="mt-6 w-full text-left">
       <tbody class="divide-y divide-line border-y border-line">
         {% for tier in tiers %}
@@ -102,11 +102,11 @@
 <section class="mt-20 grid gap-6 sm:grid-cols-2">
   <div class="panel p-6">
     <h2 class="text-lg font-bold">Your content is checked, not rewritten</h2>
-    <p class="mt-2 text-muted">After redesigning, SUBRA compares the new deck with yours: every paragraph, number, table cell, chart value, image and speaker note. If anything is missing, it tries again. If it still can't, you get a full refund.</p>
+    <p class="mt-2 text-muted">After redesigning, SUBRA compares the new deck with yours: every paragraph, number, table cell, chart value, image and speaker note. If anything is missing, it tries again. If it still can't, you don't pay.</p>
   </div>
   <div class="panel p-6">
-    <h2 class="text-lg font-bold">Your files are deleted after {{ retention_days }} days</h2>
-    <p class="mt-2 text-muted">Nobody at SUBRA opens your deck unless you ask for help. Slide text is sent to Anthropic's Claude to plan the layout. <a href="{% url 'privacy' %}" class="font-bold text-ink underline underline-offset-2">How we handle your files</a></p>
+    <h2 class="text-lg font-bold">Your files are deleted automatically</h2>
+    <p class="mt-2 text-muted">Unpaid decks go after {{ unpaid_hours }} hours, paid ones {{ retention_days }} days after payment. Nobody at SUBRA opens your deck unless you ask for help. Slide text is sent to Anthropic's Claude to plan the layout. <a href="{% url 'privacy' %}" class="font-bold text-ink underline underline-offset-2">How we handle your files</a></p>
   </div>
 </section>
 {% endblock %}

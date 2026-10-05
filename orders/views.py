@@ -32,6 +32,7 @@ def home(request):
         "max_media_mb": settings.MAX_UPLOAD_BYTES_MEDIA // 1024 // 1024,
         "max_slides": settings.MAX_SLIDES,
         "retention_days": settings.FILE_RETENTION_DAYS,
+        "unpaid_hours": settings.UNPAID_RETENTION_HOURS,
     }
     if request.user.is_authenticated:
         context["recent"] = request.user.orders.all()[:3]

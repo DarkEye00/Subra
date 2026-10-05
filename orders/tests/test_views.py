@@ -250,3 +250,18 @@ def test_preview_page_notes_equation_rendering(logged_in, user, tmp_path, fake_p
     assert order.status == S.READY, order.failure_reason
     html = page(logged_in, order)
     assert "equations" in html and "doesn't affect your download" in html
+
+
+def test_home_says_you_pay_after_seeing_the_deck(client, db):
+    html = client.get("/").content.decode()
+    assert "only after you see your redesigned deck" in html
+    assert "Switch between themes as often as you like" in html and "If it still can't, you don't pay." in html
+    assert "re-run" not in html and "full refund" not in html
+
+
+def test_terms_and_privacy_describe_paying_after_the_preview(client, db):
+    terms = client.get(reverse("terms")).content.decode()
+    privacy = client.get(reverse("privacy")).content.decode()
+    assert "re-run" not in terms and "pay by M-Pesa only if you want to download it" in terms
+    assert "48 hours" in terms and "48 hours" in privacy
+    assert "Paystack" in privacy and "IntaSend" not in privacy and "your email address" in privacy

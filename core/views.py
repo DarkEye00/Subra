@@ -5,6 +5,7 @@ from django.shortcuts import render
 def _legal_context():
     return {
         "retention_days": settings.FILE_RETENTION_DAYS,
+        "unpaid_hours": settings.UNPAID_RETENTION_HOURS,
         "reviewed": settings.LEGAL_PAGES_REVIEWED,
         "support_email": settings.SUPPORT_EMAIL,
     }
