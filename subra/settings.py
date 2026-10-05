@@ -177,7 +177,7 @@ AI_PRICING = PRICING
 AI_DAILY_CAP_USD = float(env("AI_DAILY_CAP_USD", "10"))
 USD_KES_RATE = float(env("USD_KES_RATE", "129.20"))
 CARD_FX_MARKUP = float(env("CARD_FX_MARKUP", "0.03"))
-PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.045"))  # estimate when the provider reports no fee
+PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.015"))  # estimate when the provider reports no fee
 FILE_RETENTION_DAYS = int(env("FILE_RETENTION_DAYS", "7"))
 UNPAID_RETENTION_HOURS = int(env("UNPAID_RETENTION_HOURS", "48"))  # quoted, unpaid and failed decks (Amendment 2)
 # Privacy and terms pages show a "draft" banner until Joe has reviewed them (build plan, section 10).
@@ -190,8 +190,9 @@ UPLOAD_RATE_LIMIT = (10, 3600)  # uploads per hour, per user and per IP
 PAYMENT_RATE_LIMIT = (5, 600)  # payment attempts per 10 minutes, per user and per IP
 THEME_SWITCH_RATE_LIMIT = (10, 3600)  # theme switches per hour, per user and per IP (each one runs LibreOffice)
 
-# Payments (Amendment 1A): IntaSend at launch; Daraja is a future provider.
-PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", "intasend")
+# Payments (Amendment 2): Paystack Starter Business at launch; IntaSend and Daraja are alternatives.
+PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", "paystack")
+PAYSTACK_SECRET_KEY = env("PAYSTACK_SECRET_KEY", "")  # sk_test_... or sk_live_...; also verifies webhooks
 PAYSTACK_STARTER_LIMIT_KES = int(env("PAYSTACK_STARTER_LIMIT_KES", "250000"))  # 0 once the business is registered
 INTASEND_ENV = env("INTASEND_ENV", "sandbox")  # sandbox | live
 INTASEND_PUBLISHABLE_KEY = env("INTASEND_PUBLISHABLE_KEY", "")

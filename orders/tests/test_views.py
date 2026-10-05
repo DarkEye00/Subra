@@ -210,11 +210,11 @@ def test_simulated_payment_is_unavailable_outside_debug(logged_in, order_factory
 def test_simulated_payment_needs_debug_and_no_provider_keys(settings):
     from orders.views import _dev_payment_enabled
 
-    settings.DEBUG, settings.PAYMENT_PROVIDER, settings.INTASEND_SECRET_KEY = True, "intasend", ""
+    settings.DEBUG, settings.PAYMENT_PROVIDER, settings.PAYSTACK_SECRET_KEY = True, "paystack", ""
     assert _dev_payment_enabled()
-    settings.INTASEND_SECRET_KEY = "ISSecretKey_test"
+    settings.PAYSTACK_SECRET_KEY = "sk_test_x"
     assert not _dev_payment_enabled()
-    settings.DEBUG, settings.INTASEND_SECRET_KEY = False, ""
+    settings.DEBUG, settings.PAYSTACK_SECRET_KEY = False, ""
     assert not _dev_payment_enabled()
 
 

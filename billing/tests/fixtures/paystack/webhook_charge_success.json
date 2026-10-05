@@ -1,0 +1,79 @@
+{
+  "data": {
+    "amount": 1000,
+    "authorization": {
+      "account_name": null,
+      "authorization_code": "AUTH_xnw8zfmhfl",
+      "bank": "M-PESA",
+      "bin": "071XXX",
+      "brand": "M-pesa",
+      "card_type": "",
+      "channel": "mobile_money",
+      "country_code": "KE",
+      "exp_month": "12",
+      "exp_year": "9999",
+      "last4": "X000",
+      "mobile_money_number": "0710000000",
+      "receiver_bank": null,
+      "receiver_bank_account_number": null,
+      "reusable": false,
+      "signature": null
+    },
+    "channel": "mobile_money",
+    "connect": null,
+    "createdAt": "2026-10-05T21:53:23.000Z",
+    "created_at": "2026-10-05T21:53:23.000Z",
+    "currency": "KES",
+    "customer": {
+      "customer_code": "CUS_ek666w3hq8bf86p",
+      "email": "fixtures@example.com",
+      "first_name": null,
+      "id": 406150159,
+      "international_format_phone": null,
+      "last_name": null,
+      "metadata": null,
+      "phone": null,
+      "risk_action": "default"
+    },
+    "domain": "test",
+    "fees": 15,
+    "fees_breakdown": null,
+    "fees_split": null,
+    "gateway_response": "Approved",
+    "id": 6629006703,
+    "ip_address": "203.0.113.10",
+    "log": {
+      "attempts": 0,
+      "errors": 0,
+      "history": [
+        {
+          "message": "Set payment method to mobile_money",
+          "time": 0,
+          "type": "action"
+        }
+      ],
+      "input": [],
+      "mobile": false,
+      "start_time": 1791237203,
+      "success": false,
+      "time_spent": 0
+    },
+    "message": null,
+    "metadata": {},
+    "order_id": null,
+    "paidAt": "2026-10-05T21:53:23.000Z",
+    "paid_at": "2026-10-05T21:53:23.000Z",
+    "plan": null,
+    "plan_object": {},
+    "pos_transaction_data": null,
+    "receipt_number": "10101",
+    "reference": "subra-fixture-1c1f6f78",
+    "requested_amount": 1000,
+    "source": null,
+    "split": {},
+    "status": "success",
+    "subaccount": {},
+    "transaction_date": "2026-10-05T21:53:23.000Z"
+  },
+  "event": "charge.success"
+}

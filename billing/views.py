@@ -10,7 +10,7 @@ from .providers import CallbackRejected
 from .services import handle_callback
 
 log = logging.getLogger(__name__)
-WEBHOOK_PROVIDERS = {"intasend"}  # Daraja doesn't sign callbacks, so it gets no public webhook
+WEBHOOK_PROVIDERS = {"paystack", "intasend"}  # Daraja doesn't sign callbacks, so it gets no public webhook
 
 
 @csrf_exempt

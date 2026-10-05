@@ -1,0 +1,10 @@
+{
+  "amount": 1000,
+  "currency": "KES",
+  "email": "fixtures@example.com",
+  "mobile_money": {
+    "phone": "+254710000000",
+    "provider": "mpesa"
+  },
+  "reference": "subra-fixture-1c1f6f78"
+}

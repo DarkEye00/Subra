@@ -1,4 +1,4 @@
-"""Payment providers behind one interface (build plan, Amendment 1A).
+"""Payment providers behind one interface (build plan, Amendments 1A and 2).
 
 A provider sends the payment request, authenticates and normalises callbacks,
 and checks status. It never touches the database: billing.services applies the
@@ -55,6 +55,10 @@ class PaymentProvider(Protocol):
 
 def get_provider(name=None):
     name = name or settings.PAYMENT_PROVIDER
+    if name == "paystack":
+        from .paystack import PaystackProvider
+
+        return PaystackProvider.from_settings()
     if name == "intasend":
         from .intasend import IntaSendProvider
 
