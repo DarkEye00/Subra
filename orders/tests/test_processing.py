@@ -41,7 +41,7 @@ class CostlyPlanner:
     def __init__(self, outcomes, model="claude-sonnet-5", cost=0.05):
         self.outcomes, self.model, self.cost = list(outcomes), model, cost
 
-    def plan(self, deck, feedback=None):
+    def plan(self, deck, feedback=None, labels=None):
         good = self.outcomes.pop(0) == "good"
         return PlanAttempt("claude", self.model, plan_deck(deck) if good else None, Usage(5000, 2000),
                            self.cost, 10, error=None if good else "unusable plan")
