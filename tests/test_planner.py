@@ -264,3 +264,28 @@ def test_planner_input_carries_labels(deck):
 def test_system_prompt_has_a_repairs_section():
     assert "## Repairs" in SYSTEM_PROMPT and "never shrinks text below 12pt" in SYSTEM_PROMPT
     assert "first-pass classifier" in SYSTEM_PROMPT
+
+
+# --- images in requests, current model prices (Task 8) ---------------------
+
+def test_anthropic_provider_sends_images_as_base64_blocks():
+    import base64
+
+    client = FakeClient(fake_message('{"ok": true}'))
+    AnthropicProvider(client=client).complete_json(model="m", system="s", user="look", schema={}, effort="low",
+                                                   images=[b"\x89PNG"])
+    content = client.kwargs["messages"][0]["content"]
+    assert content[0] == {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                     "data": base64.b64encode(b"\x89PNG").decode()}}
+    assert content[-1] == {"type": "text", "text": "look"}
+
+
+def test_anthropic_provider_sends_plain_text_without_images():
+    client = FakeClient(fake_message('{"ok": true}'))
+    AnthropicProvider(client=client).complete_json(model="m", system="s", user="plan", schema={}, effort="low")
+    assert client.kwargs["messages"] == [{"role": "user", "content": "plan"}]
+
+
+def test_cost_table_prices_haiku_5_5_and_sonnet_5_5():
+    assert cost_usd("claude-haiku-5-5", Usage(1_000_000, 1_000_000)) == pytest.approx(0.60)
+    assert cost_usd("claude-sonnet-5-5", Usage(1_000_000, 1_000_000)) == pytest.approx(12.0)

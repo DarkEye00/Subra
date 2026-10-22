@@ -5,6 +5,7 @@ providers are swappable (the platform will add image and video providers
 later). ``AnthropicProvider`` is the only implementation for now.
 """
 
+import base64
 import json
 import time
 from dataclasses import dataclass
@@ -49,9 +50,18 @@ class AnthropicProvider:
             client = anthropic.Anthropic(max_retries=max_retries)
         self.client = client
 
-    def complete_json(self, *, model, system, user, schema, effort, max_tokens=64000):
+    def complete_json(self, *, model, system, user, schema, effort, max_tokens=64000, images=None):
+        """``images`` are PNG bytes shown to the model before the text (vision QA)."""
         import anthropic
 
+        if images:
+            content = [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                             "data": base64.b64encode(png).decode()}}
+                for png in images
+            ] + [{"type": "text", "text": user}]
+        else:
+            content = user
         started = time.monotonic()
         try:
             # Streaming avoids HTTP timeouts on long plans; we only need the final message.
@@ -59,7 +69,7 @@ class AnthropicProvider:
                 model=model,
                 max_tokens=max_tokens,
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": user}],
+                messages=[{"role": "user", "content": content}],
                 thinking={"type": "adaptive"},
                 output_config={"effort": effort, "format": {"type": "json_schema", "schema": schema}},
             ) as stream:
