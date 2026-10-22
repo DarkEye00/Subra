@@ -223,3 +223,23 @@ def test_highlight_must_end_at_a_word_boundary(deck):
                           "body": ["s2-t3", "s2-t4"]}}
 
     assert_error(errors_for(deck, mutate), "highlight", "s2-t2")
+
+
+# --- splicing (repairs replace one source slide's parts) -------------------
+
+def test_replace_source_swaps_a_slides_parts_in_place(deck):
+    from polisher.plan import PlannedSlide, replace_source
+
+    plan = parse_plan(VALID)
+    new = replace_source(plan, 2, [PlannedSlide(2, "bullets", {"title": ["s2-t1"], "body": ["s2-t2"]}),
+                                   PlannedSlide(2, "bullets", {"body": ["s2-t3", "s2-t4"]})])
+    assert [p.source_slide for p in new.slides] == [1, 2, 2, 3, 4, 5, 6, 7]
+    assert validate_plan(new, deck) == []
+    assert plan.slides[1].slots["body"] == ["s2-t2", "s2-t3", "s2-t4"]  # the original is untouched
+
+
+def test_replace_source_rejects_slides_from_another_source(deck):
+    from polisher.plan import PlannedSlide, replace_source
+
+    with pytest.raises(ValueError):
+        replace_source(parse_plan(VALID), 2, [PlannedSlide(3, "bullets", {})])

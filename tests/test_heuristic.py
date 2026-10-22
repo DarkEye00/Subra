@@ -99,3 +99,41 @@ def test_single_large_picture_gets_image_full(tmp_path):
     plan = plan_deck(deck)
     assert plan.slides[1].layout == "image_full"
     assert validate_plan(plan, deck) == []
+
+
+# --- fallback plans (the plainest safe layout for a slide that keeps failing) ---
+
+def _items_of(deck, n):
+    from polisher.plan import _plannable
+
+    items = _plannable(deck)
+    return [items[i] for i in deck.slides[n - 1].order if i in items]
+
+
+def test_fallback_plan_splits_text_in_halves_then_quarters(tmp_path):
+    from polisher.heuristic import fallback_plan, plan_items
+    from polisher.plan import Plan
+
+    def build(prs):
+        bullets_slide(prs, "Cover", ["x"])
+        bullets_slide(prs, "Everything", [f"Point {i}: " + "detail " * 25 for i in range(12)])
+
+    deck = deck_from(tmp_path, build)
+    items = _items_of(deck, 2)
+    default, one, two = plan_items(2, items), fallback_plan(2, items, level=1), fallback_plan(2, items, level=2)
+    assert len(default) < len(one) < len(two)
+    assert all(p.layout == "bullets" for p in one + two)
+    assert "title" in one[0].slots and all("title" not in p.slots for p in one[1:])
+    cover = plan_items(1, _items_of(deck, 1), is_first_slide=True)
+    assert validate_plan(Plan(cover + two), deck) == []
+
+
+def test_fallback_plan_puts_visuals_first_with_the_title(tmp_path):
+    from polisher.heuristic import fallback_plan
+
+    deck = extract_deck(build_rich_deck(tmp_path / "rich.pptx"))
+    parts = fallback_plan(6, _items_of(deck, 6))  # two grouped notes (the first reads as the title) and a chart
+    assert parts[0].layout == "chart" and parts[0].slots == {"title": ["s6-t1"], "visuals": ["s6-c1"]}
+    assert parts[1].layout == "bullets" and parts[1].slots == {"body": ["s6-t2"]}
+    parts = fallback_plan(3, _items_of(deck, 3))  # a title and a table
+    assert parts == [parts[0]] and parts[0].layout == "table" and parts[0].slots["title"] == ["s3-t1"]

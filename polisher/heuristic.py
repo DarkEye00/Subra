@@ -28,7 +28,8 @@ def plan_deck(deck):
     return Plan(slides=slides)
 
 
-def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
+def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False, max_body_chars=MAX_BODY_CHARS,
+               max_body_paragraphs=MAX_BODY_PARAGRAPHS):
     if not [i for i in items if i.kind != "background"]:
         return [PlannedSlide(source_slide, "blank", {})]
     texts = [i for i in items if i.kind == "text"]
@@ -90,10 +91,39 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
                 cols[side] = ids
         return [PlannedSlide(source_slide, "two_column", slots(title=titles, **cols))]
 
-    chunks = _chunk_body([t for t in rest if t.id in subs] + body)
+    chunks = _chunk_body([t for t in rest if t.id in subs] + body, max_body_chars, max_body_paragraphs)
     out = [PlannedSlide(source_slide, "bullets", slots(title=titles, body=chunks[0]))]
     out += [PlannedSlide(source_slide, "bullets", {"body": c}) for c in chunks[1:]]
     return out
+
+
+def fallback_plan(source_slide, items, level=1):
+    """The plainest safe plan for a slide that keeps failing layout checks (17 Oct build plan, stage 7).
+
+    Visuals (locked objects first) get their own slide with the title; text goes into short ``bullets``
+    chunks, half the usual size at level 1 and a quarter at level 2. Nothing fancy: no stats, columns,
+    agenda, timeline or quote.
+    """
+    texts = [i for i in items if i.kind == "text"]
+    visuals = sorted((i for i in items if i.kind not in ("text", "background")), key=lambda i: i.kind != "locked")
+    titles = [t.id for t in texts if t.role == "title"][:3]
+    body = [t for t in texts if t.id not in titles]
+    out = []
+    if visuals:
+        kinds = {v.kind for v in visuals}
+        layout = "table" if kinds == {"table"} else "image_text" if kinds <= {"image", "locked"} else "chart"
+        cap = VISUAL_CAPACITY[layout]
+        chunks = [visuals[i:i + cap] for i in range(0, len(visuals), cap)]
+        first = {k: v for k, v in (("title", titles), ("visuals", [v.id for v in chunks[0]])) if v}
+        out.append(PlannedSlide(source_slide, layout, first))
+        out += [PlannedSlide(source_slide, layout, {"visuals": [v.id for v in c]}) for c in chunks[1:]]
+    factor = 2 ** level
+    for k, chunk in enumerate(_chunk_body(body, MAX_BODY_CHARS / factor, max(2, MAX_BODY_PARAGRAPHS // factor))):
+        part = {"body": chunk}
+        if not out and k == 0 and titles:
+            part = {"title": titles, "body": chunk}
+        out.append(PlannedSlide(source_slide, "bullets", part))
+    return out or [PlannedSlide(source_slide, "blank", {})]
 
 
 def _stat_entries(body):
@@ -121,11 +151,11 @@ def _two_boxes(body):
     return boxes[0][1], boxes[1][1]
 
 
-def _chunk_body(paragraphs):
+def _chunk_body(paragraphs, max_chars=MAX_BODY_CHARS, max_paragraphs=MAX_BODY_PARAGRAPHS):
     chunks, current, chars = [], [], 0
     for t in paragraphs:
         starts_group = t.level == 0
-        if current and starts_group and (chars + len(t.text) > MAX_BODY_CHARS or len(current) >= MAX_BODY_PARAGRAPHS):
+        if current and starts_group and (chars + len(t.text) > max_chars or len(current) >= max_paragraphs):
             chunks.append(current)
             current, chars = [], 0
         current.append(t.id)

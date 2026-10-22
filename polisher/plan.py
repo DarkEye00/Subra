@@ -105,6 +105,17 @@ def _parse_entry(entry, i, slot):
     raise PlanFormatError(f"Planned slide {i}, slot '{slot}': entries must be ID strings or stat objects.")
 
 
+# --- splicing ----------------------------------------------------------------
+
+def replace_source(plan, source_slide, new_slides):
+    """A copy of ``plan`` with every part of ``source_slide`` replaced, in place, by ``new_slides``."""
+    if any(ps.source_slide != source_slide for ps in new_slides):
+        raise ValueError(f"replacement slides must all come from source slide {source_slide}")
+    kept = [copy.deepcopy(ps) for ps in plan.slides if ps.source_slide != source_slide]
+    at = next((i for i, ps in enumerate(kept) if ps.source_slide > source_slide), len(kept))
+    return Plan(slides=kept[:at] + [copy.deepcopy(ps) for ps in new_slides] + kept[at:])
+
+
 # --- helpers ---------------------------------------------------------------
 
 def _plannable(deck):
