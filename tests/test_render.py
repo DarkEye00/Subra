@@ -335,3 +335,32 @@ def test_timeline_draws_one_marker_per_step(tmp_path, new_layouts):
     assert len(ovals) == 4
     labels = [sh for sh in shapes if sh.name == "SUBRA text"]
     assert len(labels) == 4
+
+
+# --- Task 4: content keeps clear of footers ---------------------------------
+
+def test_footer_in_content_area_is_avoided(tmp_path):
+    from pptx.enum.shapes import PP_PLACEHOLDER
+
+    from polisher.qa import check_deck
+
+    prs = Presentation()
+    layout = prs.slide_layouts[1]
+    prs.slides.add_slide(prs.slide_layouts[0]).shapes.title.text = "Cover"
+    s = prs.slides.add_slide(layout)
+    s.shapes.title.text = "Operations"
+    tf = s.placeholders[1].text_frame
+    tf.text = "Point one about the work we did this quarter"
+    for i in range(9):
+        tf.add_paragraph().text = f"Point {i + 2} about the work we did this quarter and what it cost"
+    ph = next(p for p in layout.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    s.shapes.clone_placeholder(ph)
+    footer = next(p for p in s.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    footer.text = "Confidential"
+    footer.left, footer.top, footer.width, footer.height = Inches(0.5), Inches(5.5), Inches(9), Inches(0.4)
+    prs.save(tmp_path / "f.pptx")
+    deck = extract_deck(tmp_path / "f.pptx")
+    out, report = render_to(tmp_path, deck, plan_deck(deck), source=tmp_path / "f.pptx")
+    body = next(sh for sh in Presentation(out).slides[1].shapes if sh.name == "SUBRA text")
+    assert body.top + body.height <= Inches(5.5)
+    assert check_deck(out, report, get_theme("navy")).flagged_slides == []

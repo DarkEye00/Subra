@@ -227,12 +227,19 @@ class _Renderer:
         return slide
 
     def _zones(self, slide):
-        """Logos and other pictures showing through from the layout or master (small ones only)."""
+        """Logos and other pictures showing through from the layout or master (small ones only), and the
+        slide's own footer and date placeholders when they hold text: content keeps clear of them."""
         zones = []
         for box in inplace.reserved_zones(slide):
             b = self._from_emu(*box)
             if b.w * b.h < 0.15 * self.W * CANVAS_H:
                 zones.append(b)
+        for el in slide.shapes._spTree:
+            if isinstance(el.tag, str) and inplace.is_placeholder(el, {"ftr", "dt"}) and "".join(
+                    _xp(el, ".//a:t/text()")).strip():
+                box = inplace.element_box(el)
+                if box:
+                    zones.append(self._from_emu(*box))
         return zones
 
     def _avoid(self, box, vertical=False):
@@ -480,8 +487,9 @@ class _Renderer:
             used = 0.0
             if heads:
                 hbox = Box(inner.x, inner.y, inner.w, min(1.2, inner.h * 0.3))
-                fit = self._text(slide, hbox, heads, heading_style)
+                fit = self._fit(heads, heading_style, hbox)
                 used = fit.height / 72 / self.scale + 0.2
+                self._text(slide, Box(inner.x, inner.y, inner.w, used - 0.1), heads, heading_style, size=fit.size)
             columns.append((Box(inner.x, inner.y + used, inner.w, inner.h - used), body))
         fitted = [self._fit(body, body_style, box).size for box, body in columns if body]
         size = min(fitted) if fitted else None
