@@ -22,8 +22,9 @@ class ScriptedPlanner:
         self.model = model
         self.feedback = []
 
-    def plan(self, deck, feedback=None):
+    def plan(self, deck, feedback=None, labels=None):
         self.feedback.append(feedback)
+        self.labels = getattr(self, "labels", []) + [labels]
         step = self.script.pop(0)
         usage = Usage(100, 50)
         if step == "good":
@@ -223,3 +224,157 @@ def test_rerender_survives_a_renderer_crash(tmp_path, deck_path):
     result = rerender(deck_path, out, "slate", first.plan, render_fn=crash)
     assert not result.ok and result.failure == "Render failed: RuntimeError: boom"
     assert not out.exists()
+
+
+# --- the repair loop (17 Oct build plan, stages 6 and 7) ------------------
+
+def _long_deck(tmp_path, paragraphs=20, picture=False):
+    """A cover and one slide with far more text than fits on it (optionally a picture slide after)."""
+    import io
+
+    from deckbuilder import png_bytes
+
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[0]).shapes.title.text = "Cover"
+    s = prs.slides.add_slide(prs.slide_layouts[1])
+    s.shapes.title.text = "Everything"
+    tf = s.placeholders[1].text_frame
+    tf.text = "Point 0: " + "detail " * 30
+    for i in range(1, paragraphs):
+        tf.add_paragraph().text = f"Point {i}: " + "detail " * 30
+    if picture:
+        p = prs.slides.add_slide(prs.slide_layouts[6])
+        p.shapes.add_picture(io.BytesIO(png_bytes()), Inches(1), Inches(1), Inches(4))
+    prs.save(tmp_path / "long.pptx")
+    return tmp_path / "long.pptx"
+
+
+class CrammingPlanner:
+    """Plans every slide as one part (the long slide overflows); repair() behaves as scripted."""
+
+    name, model = "claude", "claude-sonnet-5"
+
+    def __init__(self, repair="fallback"):
+        self.repair_mode = repair
+        self.repairs = []
+
+    def plan(self, deck, feedback=None, labels=None):
+        from polisher.plan import Plan, PlannedSlide, _plannable
+
+        items = _plannable(deck)
+        slides = []
+        for s in deck.slides:
+            own = [items[i] for i in s.order if i in items]
+            titles = [t.id for t in own if t.kind == "text" and t.role == "title"]
+            visuals = [v.id for v in own if v.kind != "text"]
+            body = [t.id for t in own if t.kind == "text" and t.id not in titles]
+            if s.number == 1:
+                slides.append(PlannedSlide(1, "title", {"title": titles, "subtitle": body}))
+            elif visuals:
+                slides.append(PlannedSlide(s.number, "image_text", {"visuals": visuals}))
+            else:
+                slides.append(PlannedSlide(s.number, "bullets", {"title": titles, "body": body}))
+        return PlanAttempt("claude", self.model, Plan(slides), Usage(100, 50), 0.01, 5)
+
+    def repair(self, deck, plan, faults, labels=None, attempt=1):
+        from polisher.plan import Plan
+
+        self.repairs.append(faults)
+        if self.repair_mode == "fallback":
+            return HeuristicPlanner().repair(deck, plan, faults, attempt=attempt)
+        if self.repair_mode == "same":
+            same = [ps for ps in plan.slides if ps.source_slide in faults]
+            return PlanAttempt("claude", self.model, Plan(same), Usage(100, 50), 0.01, 5)
+        return PlanAttempt("claude", self.model, None, Usage(100, 50), 0.01, 5, error="refusal")
+
+
+def test_overflowing_slide_is_repaired_by_the_planner(tmp_path):
+    planner = CrammingPlanner()
+    out = tmp_path / "out.pptx"
+    result = polish(_long_deck(tmp_path), out, theme="navy", planner=planner)
+    assert result.ok and result.repair_passes == 1
+    assert [a.stage for a in result.attempts] == ["plan", "repair"]
+    assert planner.repairs[0] and 2 in planner.repairs[0]
+    report = result.qa_report
+    assert report["repaired_slides"] and report["flagged_slides"] == [] and report["fallback_slides"] == []
+    assert len(result.plan["slides"]) > 2
+    assert result.total_cost_usd == pytest.approx(0.01)  # the heuristic repair is free
+
+
+def test_two_failed_repairs_fall_back_and_flag_the_slide(tmp_path):
+    planner = CrammingPlanner(repair="same")
+    result = polish(_long_deck(tmp_path), tmp_path / "out.pptx", theme="navy", planner=planner)
+    assert result.ok and result.repair_passes == 2 and len(planner.repairs) == 2
+    report = result.qa_report
+    assert report["fallback_slides"] and report["repaired_slides"] == []
+    assert report["flagged_slides"] == []  # the plainest layout split the text until it fit
+    assert [a.stage for a in result.attempts] == ["plan", "repair", "repair"]
+
+
+def test_heuristic_planner_repairs_by_splitting(tmp_path):
+    # one 4,000-character paragraph can't be split, so the slide stays flagged, but the run never fails
+    src = _long_deck(tmp_path, paragraphs=1)
+    prs = Presentation(src)
+    prs.slides[1].placeholders[1].text_frame.paragraphs[0].runs[0].text = "detail " * 570
+    prs.save(src)
+    result = polish(src, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
+    assert result.ok and result.verification.passed
+    assert result.qa_report["flagged_slides"] == [2]
+    assert result.qa_report["slides"][1]["faults"][0]["kind"] == "overflow"
+    assert result.overflow_slides == [2]
+
+
+def test_repair_that_breaks_verification_is_discarded(tmp_path):
+    calls = {"n": 0}
+
+    def flaky_render(plan, deck, theme, output, source):
+        report = render(plan, deck, theme, output, source)
+        calls["n"] += 1
+        if calls["n"] == 2:  # the repair pass loses a picture
+            prs = Presentation(output)
+            pic = next(sh for slide in prs.slides for sh in slide.shapes if sh.shape_type == 13)
+            pic.part.related_part(pic._element.blipFill.blip.rEmbed)._blob = build_png_variant()
+            prs.save(output)
+        return report
+
+    out = tmp_path / "out.pptx"
+    src = _long_deck(tmp_path, picture=True)
+    result = polish(src, out, theme="navy", planner=CrammingPlanner(), render_fn=flaky_render)
+    assert result.ok and result.repair_passes == 1
+    repair = result.attempts[1]
+    assert repair.stage == "repair" and repair.verification_passed is False and repair.plan is None
+    from polisher.extract import extract_deck
+    from polisher.verify import verify
+
+    assert verify(extract_deck(src), extract_deck(out)).passed
+    assert result.qa_report["fallback_slides"]  # the deterministic fallback still ran afterwards
+
+
+def test_qa_report_shape_and_timings(tmp_path, deck_path):
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
+    report = result.qa_report
+    assert report["retention"]["passed"] is True and report["retention"]["texts"] == 13
+    assert len(report["slides"]) == 7 and report["slides"][0]["layout"] == "title"
+    assert set(report["timings_ms"]) >= {"extract", "plan", "qa", "total"} and report["vision_qa"] is False
+    assert set(report["cost_usd"]) == {"classify", "plan", "repair", "vision", "total"}
+    assert report["repair_passes"] == 0 and report["labels"] is None
+
+
+def test_before_attempt_runs_for_repairs_too(tmp_path):
+    seen = []
+    polish(_long_deck(tmp_path), tmp_path / "out.pptx", theme="navy", planner=CrammingPlanner(),
+           before_attempt=lambda number, agent: seen.append((number, agent.model)))
+    assert seen == [(1, "claude-sonnet-5"), (2, "claude-sonnet-5")]
+
+
+def test_a_repair_outage_keeps_the_verified_deck(tmp_path):
+    out = tmp_path / "out.pptx"
+    result = polish(_long_deck(tmp_path), out, theme="navy", planner=CrammingPlanner(repair="error"))
+    assert result.ok and out.exists() and result.attempts[1].error == "refusal"
+    assert result.qa_report["fallback_slides"]
+
+
+def test_rerender_reports_qa(tmp_path, deck_path):
+    first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
+    result = rerender(deck_path, tmp_path / "slate.pptx", "slate", first.plan)
+    assert result.ok and result.qa is not None and result.overflow_slides == []

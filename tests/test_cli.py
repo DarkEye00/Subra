@@ -28,3 +28,15 @@ def test_cli_reports_validation_errors(tmp_path, capsys):
     bad.write_bytes(b"%PDF")
     assert main([str(bad), "-o", str(tmp_path / "o.pptx"), "--planner", "heuristic"]) == 2
     assert ".pptx" in capsys.readouterr().err
+
+
+def test_cli_report_includes_qa_and_timings(tmp_path, capsys):
+    src = build_rich_deck(tmp_path / "in.pptx")
+    report = tmp_path / "report.json"
+    code = main([str(src), "-o", str(tmp_path / "out.pptx"), "--planner", "heuristic", "--report", str(report),
+                 "--repair-passes", "1"])
+    assert code == 0
+    data = json.loads(report.read_text())
+    assert data["qa"]["retention"]["passed"] is True and "total" in data["timings_ms"]
+    out = capsys.readouterr().out
+    assert "QA:" in out and "timings:" in out

@@ -36,6 +36,8 @@ def main(argv=None):
     ap.add_argument("--planner", default="claude", choices=["claude", "heuristic"])
     ap.add_argument("--preview", metavar="DIR", help="also render PNG thumbnails into DIR")
     ap.add_argument("--report", metavar="FILE", help="write a JSON report of the run")
+    ap.add_argument("--repair-passes", type=int, default=2, metavar="N",
+                    help="how many times slides that fail layout checks go back to the planner (default 2)")
     ap.add_argument("--extract-only", action="store_true", help="print the extracted content as JSON and exit")
     args = ap.parse_args(argv)
 
@@ -47,7 +49,8 @@ def main(argv=None):
 
     planner, escalation = _planners(args.planner)
     try:
-        result = polish(args.input, args.output, theme=args.theme, planner=planner, escalation=escalation)
+        result = polish(args.input, args.output, theme=args.theme, planner=planner, escalation=escalation,
+                        max_repair_passes=args.repair_passes)
     except ValidationError as e:
         print(f"Rejected: {e.message}", file=sys.stderr)
         return 2
@@ -61,14 +64,19 @@ def main(argv=None):
     rate = float(os.environ.get("USD_KES_RATE", "129.20"))
     for a in result.attempts:
         status = "verified" if a.verification_passed else (a.error or "failed verification")
-        print(f"attempt {a.number}: {a.planner} {a.model or ''} "
+        print(f"attempt {a.number} ({a.stage}): {a.planner} {a.model or ''} "
               f"in={a.usage.input_tokens} out={a.usage.output_tokens} "
               f"cache_read={a.usage.cache_read_tokens} ${a.cost_usd:.4f} {a.duration_ms}ms -> {status}")
         for p in a.problems[:10]:
             print(f"    - {p}")
     print(f"total AI cost: ${result.total_cost_usd:.4f} (KES {result.total_cost_usd * rate:.2f})")
-    if result.overflow_slides:
-        print(f"slides with text at minimum size (check them): {result.overflow_slides}")
+    qa = result.qa_report
+    print(f"QA: repaired {qa['repaired_slides']}, fallbacks {qa['fallback_slides']}, flagged {qa['flagged_slides']} "
+          f"({qa['repair_passes']} repair pass(es))")
+    print("timings: " + " ".join(f"{k} {v}ms" for k, v in result.timings_ms.items()))
+    for s in qa["slides"]:
+        for f in s["faults"]:
+            print(f"    slide {s['index']}: {f['kind']}: {f['detail']}")
 
     if args.report:
         report = {
@@ -78,6 +86,8 @@ def main(argv=None):
             "overflow_slides": result.overflow_slides,
             "failure": result.failure,
             "attempts": [asdict(a) for a in result.attempts],
+            "qa": qa,
+            "timings_ms": result.timings_ms,
         }
         Path(args.report).write_text(json.dumps(report, indent=2, ensure_ascii=False))
 
