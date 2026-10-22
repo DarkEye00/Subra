@@ -61,3 +61,9 @@ def test_month_summary_splits_ai_cost_by_payment(paid_order, order_factory):
 def test_daily_spend_page_shows_the_month(staff_client, paid_order):
     html = staff_client.get("/admin/orders/dailyspend/").content.decode()
     assert "This month" in html and "Decks generated: 1, paid for: 1 (100%)" in html
+
+
+def test_order_admin_shows_the_qa_report_and_ai_stages(staff_client, paid_order):
+    html = staff_client.get(f"/admin/orders/order/{paid_order.pk}/change/").content.decode()
+    assert "Qa report" in html and "retention" in html
+    assert "Stage" in html

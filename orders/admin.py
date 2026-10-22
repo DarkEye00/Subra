@@ -17,7 +17,7 @@ class AIJobInline(admin.TabularInline):
     model = AIJob
     extra = 0
     can_delete = False
-    fields = ("run", "attempt_number", "model", "input_tokens", "output_tokens", "cache_read_tokens",
+    fields = ("run", "attempt_number", "stage", "model", "input_tokens", "output_tokens", "cache_read_tokens",
               "cost_usd", "cost_kes", "duration_ms", "verification_passed", "repairs", "error")
     readonly_fields = fields
 
@@ -62,6 +62,7 @@ class OrderAdmin(admin.ModelAdmin):
     search_fields = ("original_name", "user__email", "public_id", "payments__provider_receipt", "payments__phone")
     readonly_fields = ("public_id", "user", "product_type", "original_name", "slide_count", "tier", "price_kes",
                        "status", "paid_at", "original_file", "result_file", "preview_images", "overflow_slides",
+                       "qa_report",
                        "switch_error", "waiting_for_capacity", "failure_reason", "created_at", "updated_at",
                        "expires_at", "files_deleted_at", "ai_cost", "payment_fees", "margin")
     fields = readonly_fields + ("theme",)
@@ -100,9 +101,9 @@ class OrderAdmin(admin.ModelAdmin):
 
 @admin.register(AIJob)
 class AIJobAdmin(admin.ModelAdmin):
-    list_display = ("order", "run", "attempt_number", "model", "input_tokens", "output_tokens", "cost_usd",
+    list_display = ("order", "run", "attempt_number", "stage", "model", "input_tokens", "output_tokens", "cost_usd",
                     "cost_kes", "verification_passed", "created_at")
-    list_filter = ("model", "verification_passed", "planner")
+    list_filter = ("stage", "model", "verification_passed", "planner")
     readonly_fields = [f.name for f in AIJob._meta.fields]
 
 

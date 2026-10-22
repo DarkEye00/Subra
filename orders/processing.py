@@ -40,6 +40,26 @@ def build_planners():
     )
 
 
+def build_reviewers():
+    """(classifier, vision) for a generation. Heuristic mode gets neither: its planner ignores labels, and
+    vision QA always needs the API."""
+    if settings.POLISHER_PLANNER == "heuristic":
+        return None, None
+    from polisher.ai import AnthropicProvider
+
+    provider = AnthropicProvider()
+    classifier = vision = None
+    if settings.POLISHER_CLASSIFIER:
+        from polisher.classify import ClaudeClassifier
+
+        classifier = ClaudeClassifier(provider, settings.CLASSIFIER_MODEL, pricing=settings.AI_PRICING)
+    if settings.VISION_QA:
+        from polisher.vision import VisionQA
+
+        vision = VisionQA(provider, settings.VISION_MODEL, pricing=settings.AI_PRICING)
+    return classifier, vision
+
+
 def usd_to_kes(usd):
     rate = Decimal(str(settings.USD_KES_RATE)) * (1 + Decimal(str(settings.CARD_FX_MARKUP)))
     return (Decimal(str(usd)) * rate).quantize(Decimal("0.01"))
@@ -47,7 +67,7 @@ def usd_to_kes(usd):
 
 def log_attempt(order, record):
     AIJob.objects.create(
-        order=order, attempt_number=record.number, planner=record.planner, model=record.model or "",
+        order=order, attempt_number=record.number, stage=record.stage, planner=record.planner, model=record.model or "",
         input_tokens=record.usage.input_tokens, output_tokens=record.usage.output_tokens,
         cache_read_tokens=record.usage.cache_read_tokens, cache_write_tokens=record.usage.cache_write_tokens,
         cost_usd=Decimal(str(record.cost_usd)).quantize(Decimal("0.000001")), cost_kes=usd_to_kes(record.cost_usd),
@@ -70,23 +90,51 @@ def unpaid_expiry():
 def run_polish(order):
     """Generate the deck. Returns the PolishResult; on success the order is READY and unpaid."""
     planner, escalation = build_planners()
+    classifier, vision = build_reviewers()
     with tempfile.TemporaryDirectory(prefix="subra-job-") as tmp:
         tmp = Path(tmp)
         src, out = fetch_original(order, tmp), tmp / "polished.pptx"
         result = polish(
             src, out, theme=order.theme.slug, planner=planner, escalation=escalation,
+            classifier=classifier, vision=vision, preview_dir=tmp / "previews",
+            preview_fn=lambda pptx, out_dir: make_previews(order, pptx, tmp),
             before_attempt=lambda number, p: spend.ensure_capacity() if p.model else None,
             on_attempt=lambda record: log_attempt(order, record),
         )
         if not result.ok:
             return result
-        replaced = store_result(order, out, make_previews(order, out, tmp))
+        replaced = store_result(order, out, result.previews or make_previews(order, out, tmp))
         order.transition(
-            S.READY, note=f"Verified, {len(result.attempts)} attempt(s), ${result.total_cost_usd:.4f}",
-            plan=result.plan, overflow_slides=result.overflow_slides, failure_reason="", expires_at=unpaid_expiry(),
+            S.READY, note=ready_note(result), plan=result.plan, qa_report=result.qa_report,
+            overflow_slides=result.overflow_slides, failure_reason="", expires_at=unpaid_expiry(),
         )
         delete_files(replaced)
     return result
+
+
+def ready_note(result):
+    """e.g. "Verified, 2 attempt(s), $0.0310, 41.2s (extract 0.3s plan 29.1s qa 0.4s repair 6.0s previews 5.4s)"."""
+    attempts = sum(1 for a in result.attempts if a.stage in ("plan", "repair"))
+    timings = result.timings_ms
+    stages = " ".join(f"{k} {v / 1000:.1f}s" for k, v in timings.items() if k != "total")
+    return (f"Verified, {attempts} attempt(s), ${result.total_cost_usd:.4f}, {timings.get('total', 0) / 1000:.1f}s "
+            f"({stages})")
+
+
+def switched_qa_report(previous, result):
+    """The saved report after a theme switch: the plan is the same, so repairs and fallbacks stand; the
+    layout faults are the new render's."""
+    if result.qa is None:
+        return previous or {}
+    flags = {s["index"]: s for s in (previous or {}).get("slides", [])}
+    slides = []
+    for s in result.qa.slides:
+        d = s.to_dict()
+        old = flags.get(s.index, {})
+        d["repaired"], d["fallback"] = old.get("repaired", False), old.get("fallback", False)
+        d["vision_score"] = old.get("vision_score")
+        slides.append(d)
+    return {**(previous or {}), "slides": slides, "flagged_slides": result.qa.flagged_slides}
 
 
 
@@ -111,7 +159,8 @@ def run_rerender(order):
                 return False
             replaced = store_result(current, out, previews)
             current.transition(S.READY, note=f"Switched to {theme.slug}", theme=theme, switching_to=None,
-                               switch_error="", overflow_slides=result.overflow_slides)
+                               switch_error="", overflow_slides=result.overflow_slides,
+                               qa_report=switched_qa_report(current.qa_report, result))
         delete_files(replaced)
     return True
 

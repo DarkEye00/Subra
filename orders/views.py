@@ -102,7 +102,7 @@ def detail(request, public_id):
     }
     if order.status in (S.READY, S.RERENDERING) and order.result_file:
         context["previews"] = [signed_url(name) for name in order.preview_images]
-        context["overflow"] = order.overflow_slides
+        context["qa_notes"] = order.qa_notes
     return render(request, "orders/detail.html", context)
 
 

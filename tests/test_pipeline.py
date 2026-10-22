@@ -486,3 +486,11 @@ def test_vision_outage_does_not_fail_the_job(tmp_path, deck_path):
 def test_vision_needs_a_preview_dir(tmp_path, deck_path):
     with pytest.raises(ValueError):
         polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), vision=ScriptedVision())
+
+
+def test_vision_is_skipped_when_previews_cannot_be_rendered(tmp_path, deck_path):
+    vision = ScriptedVision()
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), vision=vision,
+                    preview_dir=tmp_path / "previews", preview_fn=lambda pptx, out_dir: [])
+    assert result.ok and result.previews == [] and vision.calls == []
+    assert [a.stage for a in result.attempts] == ["plan"] and result.qa_report["vision_qa"] is True

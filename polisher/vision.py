@@ -122,6 +122,8 @@ def review_deck(run, state, vision, planner, labels, preview_dir, preview_fn, ma
         raise ValueError("Vision QA needs a preview_dir to render slide images into")
     preview_fn = preview_fn or render_previews
     pngs = _previews(run, preview_dir, preview_fn)
+    if len(pngs) < len(state.qa.slides):  # LibreOffice failed; the deck is verified anyway, so skip the review
+        return pngs
     attempt = _review(run, vision, pngs, [s.index for s in state.qa.slides if s.ok])
     if not attempt.reviews:
         return pngs

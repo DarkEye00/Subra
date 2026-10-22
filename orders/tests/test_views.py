@@ -265,3 +265,13 @@ def test_terms_and_privacy_describe_paying_after_the_preview(client, db):
     assert "re-run" not in terms and "pay by M-Pesa only if you want to download it" in terms
     assert "48 hours" in terms and "48 hours" in privacy
     assert "Paystack" in privacy and "IntaSend" not in privacy and "your email address" in privacy
+
+
+def test_detail_shows_qa_notes(logged_in, ready_order):
+    ready_order.qa_report = {**ready_order.qa_report, "repaired_slides": [4], "fallback_slides": [2],
+                             "flagged_slides": [2]}
+    ready_order.save()
+    html = page(logged_in, ready_order)
+    assert "We re-laid out slide 4 so everything fits." in html
+    assert "Slide 2 has more content than fits comfortably on one slide" in html
+    assert "has a lot of text" not in html

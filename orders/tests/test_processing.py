@@ -271,3 +271,73 @@ def test_expired_decks_are_swept_at_least_hourly(settings):
     """Pages promise deletion 48 hours after a deck is ready; a once-a-day sweep would let it live for up to 72."""
     schedule = settings.CELERY_BEAT_SCHEDULE["delete-expired-files"]["schedule"]
     assert isinstance(schedule, (int, float)) and schedule <= 3600
+
+
+# --- QA report and per-stage logging (17 Oct build plan) ---------------------
+
+def test_qa_report_is_saved_with_the_ready_deck(queued_order):
+    tasks.process_order(queued_order.pk)
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.READY
+    assert order.qa_report["retention"]["passed"] is True and order.qa_report["flagged_slides"] == []
+    assert order.qa_report["timings_ms"]["total"] >= 0 and order.qa_report["repair_passes"] == 0
+    assert order.overflow_slides == []
+    note = order.events.filter(to_status=S.READY).get().note
+    assert note.startswith("Verified, 1 attempt(s)") and "plan " in note
+
+
+def test_every_ai_stage_is_logged_with_its_stage(queued_order, monkeypatch):
+    from polisher.classify import HeuristicClassifier
+
+    use_planners(monkeypatch, CostlyPlanner(["good"]))
+    monkeypatch.setattr(processing, "build_reviewers", lambda: (HeuristicClassifier(), None))
+    tasks.process_order(queued_order.pk)
+    jobs = list(AIJob.objects.filter(order=queued_order))
+    assert [(j.attempt_number, j.stage, j.model) for j in jobs] == [(1, "classify", ""), (2, "plan", "claude-sonnet-5")]
+    assert Order.objects.get(pk=queued_order.pk).qa_report["labels"]["1"]["type"] == "title"
+
+
+def test_heuristic_mode_runs_no_classifier_or_vision(settings):
+    settings.POLISHER_PLANNER = "heuristic"
+    assert processing.build_reviewers() == (None, None)
+
+
+def test_claude_mode_builds_the_reviewers_from_settings(settings, monkeypatch):
+    import polisher.ai
+    from polisher.classify import ClaudeClassifier
+    from polisher.vision import VisionQA
+
+    class FakeProvider:
+        def __init__(self, *a, **kw):
+            pass
+
+    monkeypatch.setattr(polisher.ai, "AnthropicProvider", FakeProvider)
+    settings.POLISHER_PLANNER, settings.POLISHER_CLASSIFIER, settings.VISION_QA = "claude", True, True
+    settings.CLASSIFIER_MODEL, settings.VISION_MODEL = "claude-haiku-5-5", "claude-sonnet-5-5"
+    classifier, vision = processing.build_reviewers()
+    assert isinstance(classifier, ClaudeClassifier) and classifier.model == "claude-haiku-5-5"
+    assert isinstance(vision, VisionQA) and vision.model == "claude-sonnet-5-5"
+    settings.POLISHER_CLASSIFIER, settings.VISION_QA = False, False
+    assert processing.build_reviewers() == (None, None)
+
+
+def test_qa_notes_name_repaired_and_flagged_slides():
+    order = Order(qa_report={"repaired_slides": [4, 9], "fallback_slides": [7], "flagged_slides": [7]})
+    assert order.qa_notes == [
+        "We re-laid out slides 4 and 9 so everything fits.",
+        "Slide 7 has more content than fits comfortably on one slide, so we used a simpler layout. "
+        "Check it in PowerPoint.",
+    ]
+    order = Order(qa_report={"repaired_slides": [4], "fallback_slides": [], "flagged_slides": [7, 8]})
+    assert order.qa_notes == [
+        "We re-laid out slide 4 so everything fits.",
+        "Slides 7 and 8 have more content than fits comfortably on one slide, so we used simpler layouts. "
+        "Check them in PowerPoint.",
+    ]
+    assert Order(qa_report={}).qa_notes == [] and Order().qa_notes == []
+
+
+def test_generation_tasks_have_a_hard_time_limit(settings):
+    assert tasks.process_order.soft_time_limit == settings.JOB_TIME_LIMIT_SECONDS
+    assert tasks.process_order.time_limit == settings.JOB_TIME_LIMIT_SECONDS + 60
+    assert tasks.rerender_order.soft_time_limit == settings.JOB_TIME_LIMIT_SECONDS

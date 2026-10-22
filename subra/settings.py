@@ -172,6 +172,12 @@ ESCALATION_MODEL = env("ESCALATION_MODEL", "claude-opus-5-5")
 PLANNER_EFFORT = env("PLANNER_EFFORT", "medium")
 ESCALATION_EFFORT = env("ESCALATION_EFFORT", "high")
 POLISHER_PLANNER = env("POLISHER_PLANNER", "claude")  # "heuristic" for offline development
+# 17 Oct build plan: a cheap classifier before planning, and vision QA on the rendered slides (off at launch).
+POLISHER_CLASSIFIER = env_bool("POLISHER_CLASSIFIER", True)
+CLASSIFIER_MODEL = env("CLASSIFIER_MODEL", "claude-haiku-5-5")
+VISION_QA = env_bool("VISION_QA", False)
+VISION_MODEL = env("VISION_MODEL", "claude-haiku-5-5")
+JOB_TIME_LIMIT_SECONDS = int(env("JOB_TIME_LIMIT_SECONDS", "600"))  # a generation or theme switch is killed after this
 AI_PRICING = PRICING
 AI_DAILY_CAP_USD = float(env("AI_DAILY_CAP_USD", "10"))
 USD_KES_RATE = float(env("USD_KES_RATE", "129.20"))

@@ -83,9 +83,9 @@
       {% endif %}
     {% endif %}
 
-    {% if overflow %}
-      <p class="mt-4 rounded-lg bg-marigold-soft px-4 py-3 text-sm">Slide{{ overflow|length|pluralize }} {{ overflow|join:", " }} {{ overflow|length|pluralize:"has,have" }} a lot of text, so the type is small. Consider splitting {{ overflow|length|pluralize:"it,them" }} in PowerPoint.</p>
-    {% endif %}
+    {% for note in qa_notes %}
+      <p class="mt-4 rounded-lg bg-marigold-soft px-4 py-3 text-sm">{{ note }}</p>
+    {% endfor %}
     {% if order.switch_error %}
       <p class="mt-4 rounded-lg bg-danger-soft px-4 py-3 text-sm font-bold text-danger">{{ order.switch_error }}</p>
     {% endif %}

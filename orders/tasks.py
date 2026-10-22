@@ -2,6 +2,8 @@ import logging
 from datetime import timedelta
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -19,7 +21,10 @@ STALLED_AFTER = timedelta(minutes=30)  # well past the slowest generation (three
 RESTARTED = "Restarted: the worker stopped mid-job"
 
 
-@shared_task(bind=True, max_retries=12)
+JOB_LIMITS = {"soft_time_limit": settings.JOB_TIME_LIMIT_SECONDS, "time_limit": settings.JOB_TIME_LIMIT_SECONDS + 60}
+
+
+@shared_task(bind=True, max_retries=12, **JOB_LIMITS)
 def process_order(self, order_id):
     with transaction.atomic():
         order = Order.objects.select_for_update().filter(pk=order_id).first()
@@ -45,6 +50,10 @@ def process_order(self, order_id):
         if self.request.called_directly or self.request.is_eager:
             return "deferred"
         raise self.retry(exc=e, countdown=300)
+    except SoftTimeLimitExceeded:
+        order.refresh_from_db()
+        processing.fail(order, f"Timed out after {settings.JOB_TIME_LIMIT_SECONDS} seconds")
+        return "failed"
     except Exception as e:
         log.exception("Processing crashed for order %s", order_id)
         order.refresh_from_db()
@@ -57,7 +66,7 @@ def process_order(self, order_id):
     return "done"
 
 
-@shared_task
+@shared_task(**JOB_LIMITS)
 def rerender_order(order_id):
     order = Order.objects.select_related("switching_to").filter(pk=order_id).first()
     if order is None or order.status != S.RERENDERING or order.switching_to is None:

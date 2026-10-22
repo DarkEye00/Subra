@@ -88,7 +88,8 @@ class Order(models.Model):
     plan = models.JSONField(null=True, blank=True)  # the verified layout plan; theme switches re-render it
     result_file = models.FileField(upload_to=result_upload_path, blank=True)
     preview_images = models.JSONField(default=list, blank=True)  # storage names, in slide order
-    overflow_slides = models.JSONField(default=list, blank=True)
+    overflow_slides = models.JSONField(default=list, blank=True)  # rendered slides with a remaining layout fault
+    qa_report = models.JSONField(default=dict, blank=True)  # retention, repairs, fallbacks, cost and time per stage
     locked_summary = models.JSONField(default=dict, blank=True)  # locked objects found at upload (Amendment 1C)
     switch_error = models.CharField(max_length=200, blank=True)
     switching_to = models.ForeignKey(Theme, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
@@ -195,6 +196,26 @@ class Order(models.Model):
         return f"{n} slide{'s' if n != 1 else ''} contain{'' if n != 1 else 's'} {what}."
 
     @property
+    def qa_notes(self):
+        """What the preview page tells the customer about repaired and flagged slides (17 Oct build plan)."""
+        report = self.qa_report or {}
+        notes = []
+        repaired = report.get("repaired_slides") or []
+        if repaired:
+            notes.append(f"We re-laid out {_slides_phrase(repaired)} so everything fits.")
+        trouble = sorted(set(report.get("fallback_slides") or []) | set(report.get("flagged_slides") or []))
+        if trouble:
+            phrase = _slides_phrase(trouble)
+            phrase = phrase[0].upper() + phrase[1:]
+            if len(trouble) == 1:
+                notes.append(f"{phrase} has more content than fits comfortably on one slide, so we used a simpler "
+                             "layout. Check it in PowerPoint.")
+            else:
+                notes.append(f"{phrase} have more content than fits comfortably on one slide, so we used simpler "
+                             "layouts. Check them in PowerPoint.")
+        return notes
+
+    @property
     def has_linked_objects(self):
         return bool((self.locked_summary or {}).get("linked"))
 
@@ -208,6 +229,13 @@ class Order(models.Model):
         if summary.get("model3d"):
             out.append("3D models appear as still images")
         return out
+
+
+def _slides_phrase(indexes):
+    nums = [str(i) for i in indexes]
+    if len(nums) == 1:
+        return f"slide {nums[0]}"
+    return "slides " + ", ".join(nums[:-1]) + " and " + nums[-1]
 
 
 class OrderEvent(models.Model):
@@ -227,6 +255,7 @@ class AIJob(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="ai_jobs")
     run = models.PositiveIntegerField(default=1, help_text="1 = the generation; theme switches make no AI calls")
     attempt_number = models.PositiveIntegerField()
+    stage = models.CharField(max_length=12, default="plan")  # classify | plan | repair | vision
     planner = models.CharField(max_length=20, default="claude")
     model = models.CharField(max_length=64, blank=True)
     input_tokens = models.PositiveIntegerField(default=0)
