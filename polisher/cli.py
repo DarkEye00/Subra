@@ -13,11 +13,13 @@ from .render.themes import THEMES
 from .validate import ValidationError
 
 
-def _planners(kind):
+def _planners(kind, classify="on"):
+    """(planner, escalation, classifier) for the CLI: heuristic runs make no API calls at all."""
+    from .classify import ClaudeClassifier, HeuristicClassifier
     from .planner import ClaudePlanner, HeuristicPlanner
 
     if kind == "heuristic":
-        return HeuristicPlanner(), None
+        return HeuristicPlanner(), None, HeuristicClassifier() if classify == "on" else None
     from .ai import AnthropicProvider
 
     provider = AnthropicProvider()
@@ -25,7 +27,10 @@ def _planners(kind):
                             effort=os.environ.get("PLANNER_EFFORT", "medium"))
     escalation = ClaudePlanner(provider, os.environ.get("ESCALATION_MODEL", "claude-opus-5-5"),
                                effort=os.environ.get("ESCALATION_EFFORT", "high"))
-    return planner, escalation
+    classifier = None
+    if classify == "on":
+        classifier = ClaudeClassifier(provider, os.environ.get("CLASSIFIER_MODEL", "claude-haiku-5-5"))
+    return planner, escalation, classifier
 
 
 def main(argv=None):
@@ -34,6 +39,8 @@ def main(argv=None):
     ap.add_argument("-o", "--output", help="where to write the polished .pptx")
     ap.add_argument("--theme", default="navy", choices=sorted(THEMES))
     ap.add_argument("--planner", default="claude", choices=["claude", "heuristic"])
+    ap.add_argument("--classifier", default="on", choices=["on", "off"],
+                    help="label each slide's type and intent first, as hints for the planner (default on)")
     ap.add_argument("--preview", metavar="DIR", help="also render PNG thumbnails into DIR")
     ap.add_argument("--report", metavar="FILE", help="write a JSON report of the run")
     ap.add_argument("--repair-passes", type=int, default=2, metavar="N",
@@ -47,10 +54,10 @@ def main(argv=None):
     if not args.output:
         ap.error("-o/--output is required")
 
-    planner, escalation = _planners(args.planner)
+    planner, escalation, classifier = _planners(args.planner, args.classifier)
     try:
         result = polish(args.input, args.output, theme=args.theme, planner=planner, escalation=escalation,
-                        max_repair_passes=args.repair_passes)
+                        classifier=classifier, max_repair_passes=args.repair_passes)
     except ValidationError as e:
         print(f"Rejected: {e.message}", file=sys.stderr)
         return 2

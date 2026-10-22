@@ -378,3 +378,35 @@ def test_rerender_reports_qa(tmp_path, deck_path):
     first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
     result = rerender(deck_path, tmp_path / "slate.pptx", "slate", first.plan)
     assert result.ok and result.qa is not None and result.overflow_slides == []
+
+
+# --- the classifier stage (Task 9) ------------------------------------------
+
+def test_classifier_labels_reach_the_planner(tmp_path, deck_path):
+    from polisher.classify import HeuristicClassifier
+
+    planner = ScriptedPlanner(["good"])
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=planner, classifier=HeuristicClassifier())
+    assert result.ok
+    assert planner.labels[0][1].type == "title"
+    assert result.qa_report["labels"]["1"]["type"] == "title"
+    assert [a.stage for a in result.attempts] == ["classify", "plan"]
+    assert result.attempts[0].planner == "heuristic" and result.attempts[0].cost_usd == 0
+    assert "classify" in result.timings_ms
+
+
+def test_classifier_outage_does_not_fail_the_job(tmp_path, deck_path):
+    from polisher.classify import ClassifyAttempt
+
+    class Down:
+        name, model = "claude", "claude-haiku-5-5"
+
+        def classify(self, deck):
+            return ClassifyAttempt(None, self.model, Usage(10, 0), 0.001, 1, error="rate limited", retryable=True)
+
+    seen = []
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), classifier=Down(),
+                    before_attempt=lambda number, agent: seen.append((number, agent.model)))
+    assert result.ok and result.labels is None and result.qa_report["labels"] is None
+    assert result.attempts[0].stage == "classify" and result.attempts[0].error == "rate limited"
+    assert seen[0] == (1, "claude-haiku-5-5") and result.qa_report["cost_usd"]["classify"] == pytest.approx(0.001)
