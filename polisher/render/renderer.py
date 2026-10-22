@@ -22,13 +22,14 @@ from pptx import Presentation
 from pptx.chart.data import BubbleChartData, CategoryChartData, XyChartData
 from pptx.dml.color import RGBColor
 from pptx.enum.chart import XL_CHART_TYPE, XL_LABEL_POSITION, XL_LEGEND_POSITION, XL_MARKER_STYLE
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 from ..extract import _xp
+from ..heuristic import PRE_NUMBERED
 from ..verify import normalize_text
 from . import inplace
 from .textfit import BULLET_INDENT_EM, LEVEL_INDENT_PT, FitPara, fit_size, line_height_ratio, measure, text_width
@@ -46,6 +47,8 @@ PAD = 0.3
 MIN_PT = 12.0  # the smallest text size anywhere (17 Oct build plan)
 TABLE_FLOOR_PT = 10.0  # a table that can't fit at 12pt may shrink to this and is flagged
 FOOTER_PLACEHOLDERS = {"ftr", "dt", "sldNum"}
+FOOTER_PH_TYPES = {PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.SLIDE_NUMBER}
+AGENDA_HANG_EM = 2.2  # the hanging indent that holds an agenda's large numbers, in ems of the text size
 # locked objects whose content has a fixed text size: never enlarge them
 NO_UPSCALE = {"equation", "group", "smartart", "audio"}
 
@@ -234,12 +237,12 @@ class _Renderer:
             b = self._from_emu(*box)
             if b.w * b.h < 0.15 * self.W * CANVAS_H:
                 zones.append(b)
-        for el in slide.shapes._spTree:
-            if isinstance(el.tag, str) and inplace.is_placeholder(el, {"ftr", "dt"}) and "".join(
-                    _xp(el, ".//a:t/text()")).strip():
-                box = inplace.element_box(el)
-                if box:
-                    zones.append(self._from_emu(*box))
+        for ph in slide.placeholders:  # python-pptx resolves a position inherited from the layout or master
+            if ph.placeholder_format.type not in FOOTER_PH_TYPES or not ph.has_text_frame:
+                continue
+            if not ph.text_frame.text.strip() or None in (ph.left, ph.top, ph.width, ph.height):
+                continue
+            zones.append(self._from_emu(ph.left, ph.top, ph.width, ph.height))
         return zones
 
     def _avoid(self, box, vertical=False):
@@ -420,12 +423,19 @@ class _Renderer:
         items = self._ids(ps, "items")
         if not items:
             return slide
+        numbered = not all(PRE_NUMBERED.match(i.text) for i in items)  # "1. Market" keeps its own numbers
         style = TStyle(t.body_font, t.text, 28, MIN_PT, bullets=False, para_space_em=0.7)
-        fit = self._text(slide, Box(area.x, area.y + 0.1, area.w, area.h - 0.1), items, style)
-        box = next(sh for sh in slide.shapes if sh.name == "SUBRA text" and sh.text_frame.text.startswith(
-            normalize_text(items[0].text)[:20]))
-        for p in box.text_frame.paragraphs:
-            _agenda_numbering(p, fit.size, t.accent, t.heading_font)
+        box = Box(area.x, area.y + 0.1, area.w, area.h - 0.1)
+        fit = self._fit(items, style, box)
+        if numbered:  # the numbers hang in a margin the text can't use, so fit the text beside them
+            hang = AGENDA_HANG_EM * fit.size / 72 / self.scale
+            fit = self._fit(items, style, Box(box.x, box.y, box.w - hang, box.h))
+        self._text(slide, box, items, style, size=fit.size)
+        if not fit.fits:
+            self.overflow = True
+        if numbered:
+            for p in self.last_shape.text_frame.paragraphs:
+                _agenda_numbering(p, fit.size, t.accent, t.heading_font)
         return slide
 
     def _layout_timeline(self, ps):
@@ -863,6 +873,7 @@ class _Renderer:
             shape.name = "SUBRA text"
         else:
             shape.left, shape.top, shape.width, shape.height = self._emu(box)
+        self.last_shape = shape
         tf = shape.text_frame
         _prepare_frame(tf, style.anchor, fit.fits)
         tf.clear()
@@ -957,7 +968,7 @@ def _agenda_numbering(p, size, color, font):
     """Large accent numbers in the heading font; auto-numbers are bullets, so they add no text to the deck."""
     _set_bullet(p, 0, "number", "arabicPeriod", size, color, None)
     pPr = p._p.get_or_add_pPr()
-    hang = Pt(size * 2.2)
+    hang = Pt(size * AGENDA_HANG_EM)
     pPr.set("marL", str(hang))
     pPr.set("indent", str(-hang))
     clr = pPr.find(qn("a:buClr"))

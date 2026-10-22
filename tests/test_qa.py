@@ -104,7 +104,7 @@ def test_overlay_band_may_cover_a_picture(tmp_path):
 
 def test_tiny_text_is_reported(tmp_path):
     prs, slide, path = _blank_deck(tmp_path)
-    _textbox(slide, "Fine print", 1, 1, 4, 1, size=9)
+    _textbox(slide, "Fine print", 1, 1, 4, 1, size=9, name="SUBRA text")
     prs.save(path)
     qa = check_deck(path, _report(), NAVY)
     assert _kinds(qa) == ["tiny_text"]
@@ -113,7 +113,9 @@ def test_tiny_text_is_reported(tmp_path):
 
 def test_tiny_text_inside_a_table_is_not_repairable(tmp_path):
     prs, slide, path = _blank_deck(tmp_path)
-    tbl = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(6), Inches(2)).table
+    frame = slide.shapes.add_table(2, 2, Inches(1), Inches(1), Inches(6), Inches(2))
+    frame.name = "SUBRA table"
+    tbl = frame.table
     for r in range(2):
         for c in range(2):
             run = tbl.cell(r, c).text_frame.paragraphs[0].add_run()
@@ -134,7 +136,7 @@ def test_shape_off_the_slide_is_reported(tmp_path):
 
 def test_low_contrast_is_reported(tmp_path):
     prs, slide, path = _blank_deck(tmp_path)
-    _textbox(slide, "Faint", 1, 1, 4, 1, color="BBBBBB")
+    _textbox(slide, "Faint", 1, 1, 4, 1, color="BBBBBB", name="SUBRA text")
     prs.save(path)
     qa = check_deck(path, _report(), NAVY)
     assert _kinds(qa) == ["low_contrast"] and qa.slides[0].faults[0].repairable is False
@@ -143,7 +145,7 @@ def test_low_contrast_is_reported(tmp_path):
 def test_contrast_uses_the_card_under_the_text(tmp_path):
     prs, slide, path = _blank_deck(tmp_path)
     _rect(slide, 0.5, 0.5, 5, 3, "0B1F3A", "SUBRA card")
-    _textbox(slide, "White on navy", 1, 1, 4, 1, color="FFFFFF")
+    _textbox(slide, "White on navy", 1, 1, 4, 1, color="FFFFFF", name="SUBRA text")
     prs.save(path)
     assert _kinds(check_deck(path, _report(), NAVY)) == []
 
@@ -186,3 +188,61 @@ def test_mark_sets_repaired_and_fallback_flags():
     assert [s.fallback for s in qa.slides] == [False, False, False, True]
     d = qa.to_dict()
     assert d["slides"][1]["repaired"] is True and d["flagged_slides"] == []
+
+
+# --- review fixes: text SUBRA kept verbatim is not its own fault ------------
+
+def test_kept_footer_text_is_not_checked_for_size_or_contrast(tmp_path):
+    from pptx.enum.shapes import PP_PLACEHOLDER
+
+    prs = Presentation()
+    layout = prs.slide_layouts[1]
+    slide = prs.slides.add_slide(layout)
+    slide.shapes.title.text = "Only a title"
+    slide.placeholders[1].text = "Body"
+    lf = next(p for p in layout.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    slide.shapes.clone_placeholder(lf)
+    footer = next(p for p in slide.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    footer.left, footer.top, footer.width, footer.height = Inches(0.5), Inches(7.0), Inches(9), Inches(0.4)
+    run = footer.text_frame.paragraphs[0].add_run()
+    run.text = "Confidential"
+    run.font.size = Pt(10)
+    run.font.color.rgb = RGBColor.from_string("CCCCCC")
+    path = tmp_path / "f.pptx"
+    prs.save(path)
+    assert _kinds(check_deck(path, _report(), NAVY)) == []
+
+
+def test_text_inside_a_kept_group_is_not_checked_for_size(tmp_path):
+    prs, slide, path = _blank_deck(tmp_path)
+    grp = slide.shapes.add_group_shape()
+    tb = grp.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+    run = tb.text_frame.paragraphs[0].add_run()
+    run.text = "A caption the customer wrote at 10pt"
+    run.font.size = Pt(10)
+    prs.save(path)
+    assert _kinds(check_deck(path, _report(), NAVY)) == []
+
+
+def test_tiny_text_in_the_renderers_own_boxes_is_still_reported(tmp_path):
+    prs, slide, path = _blank_deck(tmp_path)
+    _textbox(slide, "Fine print", 1, 1, 4, 1, size=9, name="SUBRA text")
+    prs.save(path)
+    assert _kinds(check_deck(path, _report(), NAVY)) == ["tiny_text"]
+
+
+def test_inherited_footer_position_is_seen_by_the_overlap_check(tmp_path):
+    from pptx.enum.shapes import PP_PLACEHOLDER
+
+    prs = Presentation()
+    layout = prs.slide_layouts[5]  # title only, with footer placeholders
+    lf = next(p for p in layout.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    lf.left, lf.top, lf.width, lf.height = Inches(0.5), Inches(3.0), Inches(9), Inches(0.4)
+    slide = prs.slides.add_slide(layout)
+    slide.shapes.title.text = "Title"
+    slide.shapes.clone_placeholder(lf)
+    next(p for p in slide.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER).text = "Confidential"
+    _textbox(slide, "Body text over the footer", 1, 2.8, 4, 1, name="SUBRA text")
+    path = tmp_path / "f.pptx"
+    prs.save(path)
+    assert _kinds(check_deck(path, _report(), NAVY)) == ["overlap"]

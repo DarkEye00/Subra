@@ -137,3 +137,13 @@ def test_fallback_plan_puts_visuals_first_with_the_title(tmp_path):
     assert parts[1].layout == "bullets" and parts[1].slots == {"body": ["s6-t2"]}
     parts = fallback_plan(3, _items_of(deck, 3))  # a title and a table
     assert parts == [parts[0]] and parts[0].layout == "table" and parts[0].slots["title"] == ["s3-t1"]
+
+
+def test_pre_numbered_items_do_not_get_the_agenda_layout(tmp_path):
+    def build(prs):
+        bullets_slide(prs, "Cover", ["x"])
+        bullets_slide(prs, "Agenda", ["1. Where we are", "2. Market", "3. Financials", "4. Plans"])
+        bullets_slide(prs, "After", ["a long enough paragraph so this is not treated as a closing quote slide" * 2])
+
+    deck = deck_from(tmp_path, build)
+    assert plan_deck(deck).slides[1].layout == "bullets"

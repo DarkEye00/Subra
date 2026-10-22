@@ -144,6 +144,10 @@ def review_deck(run, state, vision, planner, labels, preview_dir, preview_fn, ma
 def _previews(run, preview_dir, preview_fn):
     from .pipeline import _timed
 
+    preview_dir = Path(preview_dir)
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    for stale in preview_dir.glob("slide-*.png"):  # a repair can change the slide count; never show old slides
+        stale.unlink()
     with _timed(run.timings, "previews"):
         return list(preview_fn(run.output_path, preview_dir))
 

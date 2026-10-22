@@ -12,6 +12,7 @@ LEADING_NUMBER = re.compile(
     r"^\s*((?:KES|KSh|Ksh|USD|US\$|\$|€|£)?\s?[+-]?\d[\d,.]*\s?(?:%|bn|m|k|x|\+)?)(?=\s|$)"
 )
 AGENDA_TITLE = re.compile(r"\b(agenda|contents|outline|overview|what we.ll cover)\b", re.I)
+PRE_NUMBERED = re.compile(r"^\s*(\d{1,3}|[A-Za-z]|[ivxIVX]{1,5})[.)]\s")  # "1. ", "a) ", "iv. "
 MIN_HERO_AREA = 0.4  # share of the slide a lone picture must cover to become image_full
 MAX_BODY_CHARS = 1100
 MAX_BODY_PARAGRAPHS = 14
@@ -72,7 +73,8 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False, m
         return [PlannedSlide(source_slide, "section", slots(title=titles, subtitle=subs))]
 
     title_text = " ".join(t.text for t in texts if t.id in titles)
-    if titles and not subs and AGENDA_TITLE.search(title_text) and 3 <= len(body) <= 7 and all(t.level == 0 for t in body):
+    if (titles and not subs and AGENDA_TITLE.search(title_text) and 3 <= len(body) <= 7
+            and all(t.level == 0 for t in body) and not all(PRE_NUMBERED.match(t.text) for t in body)):
         return [PlannedSlide(source_slide, "agenda", slots(title=titles, items=[t.id for t in body]))]
 
     stats = _stat_entries(body)
@@ -132,7 +134,7 @@ def _stat_entries(body):
     entries = []
     for t in body:
         m = LEADING_NUMBER.match(t.text)
-        if not m or len(t.text) > 70 or t.level:
+        if not m or len(t.text) > 70 or t.level or PRE_NUMBERED.match(t.text):
             return None
         value = m.group(1).strip()
         highlight = None if value == t.text.strip() else value

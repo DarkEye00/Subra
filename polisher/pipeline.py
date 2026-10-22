@@ -24,7 +24,7 @@ from pathlib import Path
 from .ai import Usage
 from .extract import extract_deck
 from .heuristic import fallback_plan
-from .plan import PlanFormatError, _plannable, parse_plan, repair_plan, replace_source, validate_plan
+from .plan import PlanFormatError, StatEntry, _plannable, parse_plan, repair_plan, replace_source, validate_plan
 from .qa import check_deck
 from .render.renderer import render
 from .render.themes import get_theme
@@ -136,9 +136,10 @@ def _timed(timings, key):
 
 def polish(input_path, output_path, theme, planner, escalation=None, render_fn=render, before_attempt=None,
            on_attempt=None, classifier=None, vision=None, preview_dir=None, preview_fn=None,
-           max_repair_passes=MAX_REPAIR_PASSES):
+           max_repair_passes=MAX_REPAIR_PASSES, abort_on=()):
     """Run the whole pipeline. ``before_attempt(number, agent)`` runs before each AI call (the
-    spend cap hooks in here); ``on_attempt(record)`` runs as soon as each attempt finishes."""
+    spend cap hooks in here); ``on_attempt(record)`` runs as soon as each attempt finishes.
+    Exceptions of the ``abort_on`` types (a worker's time limit) escape instead of counting as a failed render."""
     input_path, output_path = Path(input_path), Path(output_path)
     timings = {}
     started = time.monotonic()
@@ -148,7 +149,7 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
     if deck.unsupported:
         raise UnsupportedContentError(deck.unsupported)
     theme_obj = get_theme(theme)
-    run = _Run(deck, theme_obj, input_path, output_path, render_fn, before_attempt, on_attempt, timings)
+    run = _Run(deck, theme_obj, input_path, output_path, render_fn, before_attempt, on_attempt, timings, abort_on)
 
     labels = None
     if classifier is not None:
@@ -205,8 +206,10 @@ class _Verified:
 class _Run:
     """State shared by the stages of one polish run."""
 
-    def __init__(self, deck, theme, input_path, output_path, render_fn, before_attempt, on_attempt, timings):
+    def __init__(self, deck, theme, input_path, output_path, render_fn, before_attempt, on_attempt, timings,
+                 abort_on=()):
         self.deck, self.theme = deck, theme
+        self.abort_on = tuple(abort_on)
         self.input_path, self.output_path = input_path, output_path
         self.render_fn = render_fn
         self.before_attempt, self.on_attempt = before_attempt, on_attempt
@@ -335,10 +338,11 @@ class _Run:
     # --- helpers ------------------------------------------------------------------
 
     def _repairable(self, state):
-        """Faulted source slides whose plan holds more than one item: re-planning can't help a lone table."""
+        """Faulted source slides whose plan holds more than one item besides the title: re-planning can't
+        help a lone table or chart, however it is titled."""
         counts = {}
         for ps in state.plan.slides:
-            counts[ps.source_slide] = counts.get(ps.source_slide, 0) + len(ps.ids())
+            counts[ps.source_slide] = counts.get(ps.source_slide, 0) + _items_besides_title(ps)
         return [n for n in state.qa.repairable_sources if counts.get(n, 0) >= 2]
 
     def _try_replacements(self, state, replacements, record):
@@ -348,6 +352,8 @@ class _Run:
         for n, parts in replacements.items():
             candidate = replace_source(candidate, n, parts)
         candidate, repairs = repair_plan(candidate, self.deck)
+        if candidate.to_dict() == state.plan.to_dict():  # the same plan again would render the same faults
+            return False
         errors = validate_plan(candidate, self.deck)
         if record is not None:
             record.repairs = repairs
@@ -389,10 +395,22 @@ class _Run:
             outcome.verification = verify(self.deck, extract_deck(outcome.path), slide_sources=outcome.report.slide_sources,
                                           dropped_backgrounds=outcome.report.dropped_backgrounds)
         except Exception as e:  # a renderer crash counts as a failed attempt, not a lost order
+            if isinstance(e, self.abort_on):
+                outcome.discard()
+                raise
             outcome.error_type = type(e).__name__
             outcome.error = f"Render failed: {outcome.error_type}: {e}"
             outcome.discard()
         return outcome
+
+
+def _items_besides_title(ps):
+    n = 0
+    for name, entries in ps.slots.items():
+        if name == "title":
+            continue
+        n += sum(len(e.ids) if isinstance(e, StatEntry) else 1 for e in entries)
+    return n
 
 
 @dataclass
@@ -426,7 +444,7 @@ class RerenderResult:
         return self.render_report.overflow_slides if self.render_report else []
 
 
-def rerender(input_path, output_path, theme, plan_dict, render_fn=render):
+def rerender(input_path, output_path, theme, plan_dict, render_fn=render, abort_on=()):
     """Render a saved, already-verified plan in another theme: no planner call and no retry.
 
     A new font can reflow text, so the result is verified and checked again. On failure nothing is written.
@@ -458,6 +476,8 @@ def rerender(input_path, output_path, theme, plan_dict, render_fn=render):
         os.replace(tmp, output_path)
         return RerenderResult(ok=True, output_path=output_path, render_report=report, verification=verification, qa=qa)
     except Exception as e:  # a crash leaves the previous deck in place
+        if isinstance(e, tuple(abort_on)):
+            raise
         return RerenderResult(ok=False, output_path=None, failure=f"Render failed: {type(e).__name__}: {e}")
     finally:
         tmp.unlink(missing_ok=True)

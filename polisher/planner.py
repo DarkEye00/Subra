@@ -94,7 +94,7 @@ Each stat entry is {{"ids": [...], "highlight": string or null}}.
 - The renderer shrinks text to fit, down to about 12pt, and flows long lists of short lines into two columns by itself. Split a slide when its text is long: more than about 14 lines, more than about 170 words, or several distinct groups of points. Split at a top-level paragraph so sub-points stay with their parent.
 - Keep a paragraph's sub-points (higher `level`) in the same slot as their parent.
 - Slides with no content are not sent to you; ignore them.
-- `agenda` suits a contents or outline slide with 3 to 7 items; `timeline` suits 3 to 6 dated or sequential steps; `image_full` suits a slide that is one photo plus a title and nothing else.
+- `agenda` suits a contents or outline slide with 3 to 7 items (it adds its own numbers only when the items don't already start with one); `timeline` suits 3 to 6 dated or sequential steps; `image_full` suits a slide that is one photo plus a title and nothing else.
 - A bullets slide with 1 to 3 short, punchy lines reads better as `stats` (when they are figures) or `quote` (when it is one message).
 - Vary consecutive slides: avoid the same layout three times in a row unless the content demands it.
 - Aim for variety and rhythm across the deck, but never at the cost of the rules.

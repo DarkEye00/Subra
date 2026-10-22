@@ -364,3 +364,89 @@ def test_footer_in_content_area_is_avoided(tmp_path):
     body = next(sh for sh in Presentation(out).slides[1].shapes if sh.name == "SUBRA text")
     assert body.top + body.height <= Inches(5.5)
     assert check_deck(out, report, get_theme("navy")).flagged_slides == []
+
+
+# --- review fixes: agenda robustness, inherited footers --------------------
+
+def _agenda_deck(tmp_path, items, title="Agenda"):
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[0]).shapes.title.text = "Cover"
+    s = prs.slides.add_slide(prs.slide_layouts[1])
+    s.shapes.title.text = title
+    tf = s.placeholders[1].text_frame
+    tf.text = items[0]
+    for item in items[1:]:
+        tf.add_paragraph().text = item
+    prs.save(tmp_path / "agenda.pptx")
+    return tmp_path / "agenda.pptx"
+
+
+def _agenda_plan(deck):
+    ids = [t.id for t in deck.slides[1].texts if t.role != "title"]
+    return parse_plan({"slides": [
+        {"source_slide": 1, "layout": "title", "slots": {"title": ["s1-t1"]}},
+        {"source_slide": 2, "layout": "agenda", "slots": {"title": ["s2-t1"], "items": ids}},
+    ]})
+
+
+@pytest.mark.parametrize("first", ["Where  we are", " Where we are", "Where\twe are", " Where we are"])
+def test_agenda_survives_irregular_whitespace_in_its_items(tmp_path, first):
+    src = _agenda_deck(tmp_path, [first, "Market", "Financials", "Plans"])
+    deck = extract_deck(src)
+    out, report = render_to(tmp_path, deck, _agenda_plan(deck), source=src)
+    assert verify(deck, extract_deck(out)).passed and report.overflow_slides == []
+
+
+def test_pre_numbered_agenda_items_are_not_numbered_again(tmp_path):
+    from pptx.oxml.ns import qn
+
+    src = _agenda_deck(tmp_path, ["1. Where we are", "2. Market", "3. Financials", "4. Plans"])
+    deck = extract_deck(src)
+    out, _ = render_to(tmp_path, deck, _agenda_plan(deck), source=src)
+    box = next(sh for sh in Presentation(out).slides[1].shapes if sh.name == "SUBRA text")
+    assert all(p._p.pPr is None or p._p.pPr.find(qn("a:buAutoNum")) is None for p in box.text_frame.paragraphs)
+    assert verify(deck, extract_deck(out)).passed
+
+
+def test_agenda_text_fits_beside_its_numbers(tmp_path):
+    from polisher.render.textfit import FitPara, measure
+
+    items = [f"Item {i}: a long agenda line about the quarter's work, its costs and the people involved" for i in range(7)]
+    src = _agenda_deck(tmp_path, items)
+    deck = extract_deck(src)
+    out, report = render_to(tmp_path, deck, _agenda_plan(deck), source=src)
+    assert report.overflow_slides == []
+    box = next(sh for sh in Presentation(out).slides[1].shapes if sh.name == "SUBRA text")
+    paragraphs = box.text_frame.paragraphs
+    size = paragraphs[0].runs[0].font.size.pt
+    mar_l = int(paragraphs[0]._p.pPr.get("marL")) / 12700
+    paras = [FitPara(runs=[(p.text, False, False)]) for p in paragraphs]
+    height = measure(paras, "Calibri", size, box.width / 12700 - mar_l, para_space_em=0.7).height
+    assert height <= box.height / 12700
+
+
+def test_footer_inherited_from_the_layout_is_avoided(tmp_path):
+    from pptx.enum.shapes import PP_PLACEHOLDER
+
+    from polisher.qa import check_deck
+
+    prs = Presentation()
+    layout = prs.slide_layouts[1]
+    lf = next(p for p in layout.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    lf.left, lf.top, lf.width, lf.height = Inches(0.5), Inches(5.5), Inches(9), Inches(0.4)
+    prs.slides.add_slide(prs.slide_layouts[0]).shapes.title.text = "Cover"
+    s = prs.slides.add_slide(layout)
+    s.shapes.title.text = "Operations"
+    tf = s.placeholders[1].text_frame
+    tf.text = "Point one about the work we did this quarter"
+    for i in range(9):
+        tf.add_paragraph().text = f"Point {i + 2} about the work we did this quarter and what it cost"
+    s.shapes.clone_placeholder(lf)
+    footer = next(p for p in s.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+    footer.text = "Confidential"  # no position of its own: it inherits the layout's
+    prs.save(tmp_path / "f.pptx")
+    deck = extract_deck(tmp_path / "f.pptx")
+    out, report = render_to(tmp_path, deck, plan_deck(deck), source=tmp_path / "f.pptx")
+    body = next(sh for sh in Presentation(out).slides[1].shapes if sh.name == "SUBRA text")
+    assert body.top + body.height <= Inches(5.5)
+    assert check_deck(out, report, get_theme("navy")).flagged_slides == []

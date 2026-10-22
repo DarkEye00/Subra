@@ -341,3 +341,19 @@ def test_generation_tasks_have_a_hard_time_limit(settings):
     assert tasks.process_order.soft_time_limit == settings.JOB_TIME_LIMIT_SECONDS
     assert tasks.process_order.time_limit == settings.JOB_TIME_LIMIT_SECONDS + 60
     assert tasks.rerender_order.soft_time_limit == settings.JOB_TIME_LIMIT_SECONDS
+
+
+def test_a_soft_time_limit_during_rendering_fails_the_order(queued_order, monkeypatch):
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    seen = {}
+
+    def killed(*args, **kwargs):
+        seen.update(kwargs)
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(processing, "polish", killed)
+    assert tasks.process_order(queued_order.pk) == "failed"
+    order = Order.objects.get(pk=queued_order.pk)
+    assert order.status == S.FAILED and "Timed out after 600 seconds" in order.failure_reason
+    assert seen["abort_on"] == (SoftTimeLimitExceeded,)

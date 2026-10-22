@@ -8,6 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
+from celery.exceptions import SoftTimeLimitExceeded
 from django.conf import settings
 from django.core.files import File
 from django.core.files.storage import default_storage
@@ -99,7 +100,7 @@ def run_polish(order):
             classifier=classifier, vision=vision, preview_dir=tmp / "previews",
             preview_fn=lambda pptx, out_dir: make_previews(order, pptx, tmp),
             before_attempt=lambda number, p: spend.ensure_capacity() if p.model else None,
-            on_attempt=lambda record: log_attempt(order, record),
+            on_attempt=lambda record: log_attempt(order, record), abort_on=(SoftTimeLimitExceeded,),
         )
         if not result.ok:
             return result
@@ -147,7 +148,7 @@ def run_rerender(order):
     with tempfile.TemporaryDirectory(prefix="subra-switch-") as tmp:
         tmp = Path(tmp)
         src, out = fetch_original(order, tmp), tmp / "polished.pptx"
-        result = rerender(src, out, theme.slug, order.plan)
+        result = rerender(src, out, theme.slug, order.plan, abort_on=(SoftTimeLimitExceeded,))
         if not result.ok:
             finish_switch_failed(order, theme, result.failure)
             return False

@@ -23,6 +23,7 @@ EDGE_TOLERANCE = Inches(0.02)
 BACKGROUND_NAMES = ("SUBRA decor", "SUBRA card")
 OVERLAY_NAME = "SUBRA overlay"
 FOOTER_TYPES = {"ftr", "dt", "sldNum"}
+TITLE_TYPES = {"title", "ctrTitle"}
 LABEL_CHARS = 30
 
 
@@ -133,6 +134,12 @@ class _Shape:
         return "content"
 
     @property
+    def ours(self):
+        """Text the renderer wrote (its own boxes and the title placeholder), as opposed to text kept verbatim:
+        footers, slide numbers, locked objects. Size and colour rules apply only to what we wrote."""
+        return self.name.startswith("SUBRA") or self.placeholder_type in TITLE_TYPES
+
+    @property
     def label(self):
         if self.text:
             short = self.text if len(self.text) <= LABEL_CHARS else self.text[:LABEL_CHARS - 1] + "…"
@@ -148,12 +155,28 @@ def _text_of(el):
     return normalize_text(" ".join(_xp(el, ".//a:t/text()")))
 
 
+def _inherited_boxes(slide):
+    """Boxes of placeholders that inherit their position from the layout or master (python-pptx resolves it)."""
+    out = {}
+    for ph in slide.placeholders:
+        try:
+            box = (ph.left, ph.top, ph.width, ph.height)
+        except Exception:  # an odd placeholder python-pptx can't resolve: no box, so it's skipped
+            continue
+        if None not in box:
+            out[str(ph.shape_id)] = tuple(int(v) for v in box)
+    return out
+
+
 def _shapes(slide):
     out = []
+    inherited = _inherited_boxes(slide)
     for el in slide.shapes._spTree:
         if not isinstance(el.tag, str) or _local(el) in inplace.STRUCTURAL_CHILDREN:
             continue
         box = inplace.element_box(el)
+        if box is None:
+            box = inherited.get(next(iter(_xp(el, "./*/p:cNvPr/@id")), None))
         if box is None:
             continue
         tag = _local(el)
@@ -228,6 +251,8 @@ def _off_slide(shapes, width, height):
 def _tiny_text(shapes):
     faults = []
     for s in shapes:
+        if not s.ours:
+            continue
         smallest = None
         for run in _xp(s.el, ".//a:r"):
             if not "".join(_xp(run, "./a:t/text()")).strip():
@@ -254,7 +279,7 @@ def _contrast(slide, shapes, theme):
     backgrounds = [s for s in shapes if s.role in ("background", "overlay") and _fill_of(s.el)]
     slide_bg = _slide_background(slide, theme)
     for s in shapes:
-        if s.kind != "text":
+        if s.kind != "text" or not s.ours:
             continue
         cx, cy = s.box[0] + s.box[2] / 2, s.box[1] + s.box[3] / 2
         under = [b for b in backgrounds if _contains(b.box, cx, cy)]

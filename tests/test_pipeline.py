@@ -286,6 +286,14 @@ class CrammingPlanner:
         if self.repair_mode == "same":
             same = [ps for ps in plan.slides if ps.source_slide in faults]
             return PlanAttempt("claude", self.model, Plan(same), Usage(100, 50), 0.01, 5)
+        if self.repair_mode == "rotate":  # a different plan each time that still crams everything on one slide
+            import copy
+
+            parts = [copy.deepcopy(ps) for ps in plan.slides if ps.source_slide in faults]
+            for ps in parts:
+                body = ps.slots.get("body", [])
+                ps.slots["body"] = body[1:] + body[:1]
+            return PlanAttempt("claude", self.model, Plan(parts), Usage(100, 50), 0.01, 5)
         return PlanAttempt("claude", self.model, None, Usage(100, 50), 0.01, 5, error="refusal")
 
 
@@ -303,7 +311,7 @@ def test_overflowing_slide_is_repaired_by_the_planner(tmp_path):
 
 
 def test_two_failed_repairs_fall_back_and_flag_the_slide(tmp_path):
-    planner = CrammingPlanner(repair="same")
+    planner = CrammingPlanner(repair="rotate")
     result = polish(_long_deck(tmp_path), tmp_path / "out.pptx", theme="navy", planner=planner)
     assert result.ok and result.repair_passes == 2 and len(planner.repairs) == 2
     report = result.qa_report
@@ -442,15 +450,36 @@ class ScriptedVision:
         return VisionAttempt(reviews, self.model, Usage(500 * len(indexes), 50), 0.002, 1)
 
 
+class SplittingPlanner(HeuristicPlanner):
+    """Heuristic plans; a repair splits the faulted slide's body into two parts (a genuinely new plan)."""
+
+    def repair(self, deck, plan, faults, labels=None, attempt=1):
+        import copy
+
+        from polisher.plan import Plan
+
+        parts = []
+        for ps in plan.slides:
+            if ps.source_slide not in faults:
+                continue
+            body = ps.slots.get("body", [])
+            first = copy.deepcopy(ps)
+            first.slots["body"] = body[:1]
+            second = copy.deepcopy(ps)
+            second.slots = {"body": body[1:]}
+            parts += [first, second]
+        return PlanAttempt("heuristic", None, Plan(parts), Usage(0, 0), 0.0, 1)
+
+
 def test_vision_faults_trigger_a_repair_and_previews_are_returned(tmp_path, deck_path):
     vision = ScriptedVision(low=[2])
-    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), vision=vision,
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=SplittingPlanner(), vision=vision,
                     preview_dir=tmp_path / "previews", preview_fn=fake_preview_fn)
     assert result.ok and result.qa_report["vision_qa"] is True
-    assert len(result.previews) == 7 and all(p.exists() for p in result.previews)
+    assert len(result.previews) == 8 and all(p.exists() for p in result.previews)  # slide 2 became two slides
     assert result.repair_passes == 1
     assert [a.stage for a in result.attempts] == ["plan", "vision", "repair", "vision"]
-    assert vision.calls[0] == [1, 2, 3, 4, 5, 6, 7] and vision.calls[1] == [2]
+    assert vision.calls[0] == [1, 2, 3, 4, 5, 6, 7] and vision.calls[1] == [2, 3]
     slides = result.qa_report["slides"]
     assert slides[1]["vision_score"] == 5.0 and slides[1]["repaired"] is True
     assert result.qa_report["flagged_slides"] == [] and "vision" in result.timings_ms and "previews" in result.timings_ms
@@ -494,3 +523,79 @@ def test_vision_is_skipped_when_previews_cannot_be_rendered(tmp_path, deck_path)
                     preview_dir=tmp_path / "previews", preview_fn=lambda pptx, out_dir: [])
     assert result.ok and result.previews == [] and vision.calls == []
     assert [a.stage for a in result.attempts] == ["plan"] and result.qa_report["vision_qa"] is True
+
+
+# --- review fixes ------------------------------------------------------------
+
+def test_a_decks_own_small_footers_do_not_trigger_repairs(tmp_path):
+    from pptx.enum.shapes import PP_PLACEHOLDER
+    from pptx.util import Pt
+
+    from deckbuilder import build_business_deck
+
+    src = build_business_deck(tmp_path / "b.pptx")
+    prs = Presentation(src)
+    for slide in prs.slides:
+        lf = next((p for p in slide.slide_layout.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER), None)
+        if lf is None:
+            continue
+        slide.shapes.clone_placeholder(lf)
+        footer = next(p for p in slide.placeholders if p.placeholder_format.type == PP_PLACEHOLDER.FOOTER)
+        footer.left, footer.top, footer.width, footer.height = Inches(0.5), Inches(7.0), Inches(9), Inches(0.4)
+        run = footer.text_frame.paragraphs[0].add_run()
+        run.text = "Confidential"
+        run.font.size = Pt(10)
+    prs.save(src)
+    result = polish(src, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
+    assert result.ok and result.repair_passes == 0
+    assert result.qa_report["flagged_slides"] == [] and result.qa_report["fallback_slides"] == []
+    assert len(result.plan["slides"]) == 12
+
+
+def test_a_titled_table_that_cannot_fit_is_flagged_without_planner_calls(tmp_path):
+    prs = Presentation()
+    prs.slides.add_slide(prs.slide_layouts[0]).shapes.title.text = "Cover"
+    s = prs.slides.add_slide(prs.slide_layouts[5])
+    s.shapes.title.text = "Every branch"
+    tbl = s.shapes.add_table(30, 4, Inches(0.5), Inches(1.5), Inches(9), Inches(5)).table
+    for r in range(30):
+        for c in range(4):
+            tbl.cell(r, c).text = f"Branch {r}" if c == 0 else f"{r * 10 + c}"
+    prs.save(tmp_path / "t.pptx")
+    planner = CrammingPlanner()
+    result = polish(tmp_path / "t.pptx", tmp_path / "out.pptx", theme="navy", planner=planner)
+    assert result.ok and planner.repairs == [] and result.repair_passes == 0
+    assert [a.stage for a in result.attempts] == ["plan"]
+    assert result.qa_report["flagged_slides"] == [2] and result.qa_report["fallback_slides"] == []
+
+
+def test_an_identical_replan_ends_the_repair_loop(tmp_path):
+    planner = CrammingPlanner(repair="same")
+    result = polish(_long_deck(tmp_path), tmp_path / "out.pptx", theme="navy", planner=planner)
+    assert result.ok and result.repair_passes == 1 and len(planner.repairs) == 1
+    assert result.qa_report["fallback_slides"] and result.qa_report["flagged_slides"] == []
+
+
+def test_abort_exceptions_escape_the_pipeline(tmp_path, deck_path):
+    class Abort(Exception):
+        pass
+
+    def killed(*args):
+        raise Abort("soft time limit")
+
+    with pytest.raises(Abort):
+        polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), render_fn=killed,
+               abort_on=(Abort,))
+    first = polish(deck_path, tmp_path / "navy.pptx", theme="navy", planner=HeuristicPlanner())
+    with pytest.raises(Abort):
+        rerender(deck_path, tmp_path / "slate.pptx", "slate", first.plan, render_fn=killed, abort_on=(Abort,))
+
+
+def test_stale_previews_are_cleared_before_vision_renders(tmp_path, deck_path):
+    preview_dir = tmp_path / "previews"
+    preview_dir.mkdir()
+    stale = preview_dir / "slide-99.png"
+    stale.write_bytes(b"old")
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), vision=ScriptedVision(),
+                    preview_dir=preview_dir, preview_fn=fake_preview_fn)
+    assert result.ok and not stale.exists() and len(result.previews) == 7

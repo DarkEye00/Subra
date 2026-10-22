@@ -73,6 +73,9 @@ def rerender_order(order_id):
         return "skipped"
     try:
         return "done" if processing.run_rerender(order) else "unchanged"
+    except SoftTimeLimitExceeded:
+        processing.finish_switch_failed(order, order.switching_to, f"Timed out after {settings.JOB_TIME_LIMIT_SECONDS} seconds")
+        return "failed"
     except Exception as e:
         log.exception("Theme switch crashed for order %s", order_id)
         processing.finish_switch_failed(order, order.switching_to, f"Internal error: {type(e).__name__}: {e}")
