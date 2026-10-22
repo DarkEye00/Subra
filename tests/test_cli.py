@@ -40,3 +40,4 @@ def test_cli_report_includes_qa_and_timings(tmp_path, capsys):
     assert data["qa"]["retention"]["passed"] is True and "total" in data["timings_ms"]
     out = capsys.readouterr().out
     assert "QA:" in out and "timings:" in out
+    assert "(classify)" in out and "failed verification" not in out

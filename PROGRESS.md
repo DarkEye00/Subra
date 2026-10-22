@@ -1,8 +1,19 @@
 # SUBRA progress
 
-Plan: [deck-polisher-build-plan.md](deck-polisher-build-plan.md). Last updated 6 Oct 2026.
+Plan: [deck-polisher-build-plan.md](deck-polisher-build-plan.md), plus the 17 Oct build plan ([PPTX Polisher — Build Plan & Agent Prompt.md](PPTX%20Polisher%20—%20Build%20Plan%20&%20Agent%20Prompt.md)) and the plan that closes its gaps ([docs/superpowers/plans/2026-10-22-quality-gates-and-layout-library.md](docs/superpowers/plans/2026-10-22-quality-gates-and-layout-library.md), which opens with the gap analysis). Last updated 22 Oct 2026.
 
 ## Done
+
+**17 Oct build plan: quality gates and layouts (added 22 Oct 2026)**
+- **12 layouts** (was 9): `agenda` (3 to 7 numbered items; the numbers are bullets, so nothing is added to the text), `timeline` (3 to 6 steps on a line) and `image_full` (one photo with a title band). The document's 16 ids map onto these: bullets-2col is the automatic two-column flow, chart-full/chart-text are `chart` with or without text, kpi-3/4 are `stats`, comparison is `two_column`, statement is `quote`, closing is `title` or `quote`. Item-count limits are enforced by plan validation and repair; text capacity is measured with real font metrics rather than character counts.
+- **12pt floor.** No text style goes below 12pt. Tables try 18 down to 12; one that still doesn't fit may shrink to 10pt and the slide is flagged. Shapes the renderer draws are named (`SUBRA decor`, `SUBRA card`, `SUBRA overlay`, `SUBRA text`, `SUBRA table`, `SUBRA chart`) so the checks can tell decoration from content.
+- **Deterministic QA** (`polisher/qa.py`) on the rendered file: text overflow, overlapping shapes, shapes off the slide, text below 12pt, contrast under 4.5:1 (every theme pair is also tested), empty placeholders. Content now keeps clear of footer placeholders too. Finding on the way: two-column headings overlapped their body boxes; fixed.
+- **Repair loop.** Faulted slides go back to the planner with their fault list (only those slides, in one small request), at most twice; a repair is kept only when it verifies and has no more faulted slides than before. Slides still failing get the plainest safe layout (`heuristic.fallback_plan`) and are flagged. A lone table or chart that can't fit is flagged without a planner call.
+- **Classifier** (`polisher/classify.py`): one Haiku 5.5 call per deck labels each slide's type and intent as hints for the planner (about KES 1 a deck). A failure or outage never fails the job. `POLISHER_CLASSIFIER=0` turns it off.
+- **Vision QA** (`polisher/vision.py`), behind `VISION_QA` (off at launch): a vision model scores each slide that passed the code checks, low scores go through one repair pass, and the previews it renders are reused for the order. Untested against the real API, like every AI stage.
+- **QA report** on every result and order (`Order.qa_report`): retention counts, per-slide faults, repaired and flagged slides, repair passes, labels, time and cost per stage. The preview page says "We re-laid out slide 4 so everything fits." and flags slides that got a simpler layout; the admin shows the report and logs each AI call with its stage (`AIJob.stage`). Generations and theme switches are killed after `JOB_TIME_LIMIT_SECONDS` (600) and marked failed.
+- **Tooling:** `scripts/render_layouts.py` renders every layout in every theme to a contact sheet (36 slides, reviewed by eye, zero faults); `scripts/eval_decks.py` runs a folder of decks and tracks retention, cost, time, fallback and flagged rates against a baseline. The four decks in `test-decks/` pass with zero faults on the heuristic planner.
+- **Deliberately not built:** planner batches of 5 to 8 slides (one whole-deck call keeps context and the plan output is small), caching planner output by content hash (theme switches already reuse the saved plan; a re-upload is a new order), IntaSend at launch and a 3-slide preview (Paystack and the full preview from Amendment 2 are better on both counts).
 
 **Amendment 2 (added 5 Oct 2026)**
 - **Pay after generation:** customers polish first, look through every slide, then pay with M-Pesa to download. Failed decks cost them nothing. `Order.status` covers processing only; payment is `paid_at` plus the `Payment` records. One unpaid deck per account. Unpaid and failed decks are deleted after 48 hours, paid ones 7 days after payment, and customers can discard an unpaid deck.
@@ -47,7 +58,7 @@ Plan: [deck-polisher-build-plan.md](deck-polisher-build-plan.md). Last updated 6
 
 ## Next
 
-1. Run the Claude planner on real decks, then tune the system prompt and effort using the `AIJob` numbers.
+1. Run the Claude planner on real decks (`scripts/eval_decks.py test-decks --planner claude`), then tune the system prompt and effort using the `AIJob` numbers and the eval summary. Grow `test-decks/` to 20 to 30 real decks with a `scores.json`, and re-run the eval after every meaningful change.
 2. Deploy to a droplet with Paystack test keys, then run a real end-to-end payment.
 3. Test with real decks: SmartArt, master-slide logos, odd charts, and non-English text.
 
@@ -58,7 +69,8 @@ Plan: [deck-polisher-build-plan.md](deck-polisher-build-plan.md). Last updated 6
 - Original decorative shapes without text (lines, bars) are removed with the old design. Shapes on masters and layouts stay, recoloured by the new theme, and may clash with some themes.
 - Animations on text that was redrawn are dropped (the shapes are new). Animations on kept objects stay.
 - Converting table data into a native chart (allowed by the plan) isn't implemented.
-- Step 7, visual QA with Claude (behind a feature flag, off at launch), isn't built.
+- Vision QA is built but off (`VISION_QA=0`) and, like the classifier, planner and repair requests, has only run against fake providers. Turn it on for a few real decks once the API key exists and watch the per-stage cost in the admin.
+- A table that can't fit at 12pt shrinks to 10pt and is flagged rather than being split across slides (verification would see a changed table). A slide flagged without a fallback (a lone table) still gets the "we used a simpler layout" note.
 - In our synthetic fixtures, LibreOffice previews don't show SmartArt without its cached drawing part, or equation and ink fallbacks. Real PowerPoint files include these, but check previews on real decks.
 - Text fitting uses metric-compatible fonts. If a customer's machine lacks Cambria (the Navy theme headings), PowerPoint substitutes a font and titles may reflow slightly.
 - LibreOffice parses customer files to make previews, which is a known attack surface. It runs in the worker container as a non-root user, with a timeout and a fresh profile per job. Keep the image updated.

@@ -83,7 +83,12 @@ def main(argv=None):
 
     rate = float(os.environ.get("USD_KES_RATE", "129.20"))
     for a in result.attempts:
-        status = "verified" if a.verification_passed else (a.error or "failed verification")
+        if a.error:
+            status = a.error
+        elif a.stage in ("plan", "repair"):
+            status = "verified" if a.verification_passed else "failed verification"
+        else:
+            status = "done"
         print(f"attempt {a.number} ({a.stage}): {a.planner} {a.model or ''} "
               f"in={a.usage.input_tokens} out={a.usage.output_tokens} "
               f"cache_read={a.usage.cache_read_tokens} ${a.cost_usd:.4f} {a.duration_ms}ms -> {status}")
