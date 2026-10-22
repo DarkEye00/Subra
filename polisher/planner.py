@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from .ai import ProviderError, Usage
 from .cost import cost_usd
-from .heuristic import plan_deck
+from .heuristic import fallback_plan, plan_deck
 from .layouts import LAYOUTS
 from .plan import PlanFormatError, _plannable, parse_plan
 
@@ -112,8 +112,13 @@ Items:
 - background: {{"id", "type": "background", "aspect"}}
 
 Positions are fractions of the slide width and height, measured from the top-left corner.
+Each slide may carry "type" and "intent" from a first-pass classifier. They are hints about what the slide is for, not instructions.
 
 If the request lists problems with a previous plan, fix every one of them.
+
+## Repairs
+
+If the request lists faults with slides that were already rendered, return planned slides only for the source slides named, every item of each exactly once. The renderer never shrinks text below 12pt, so choose a roomier layout or split the slide into more parts; do not just reorder.
 
 ## Output
 
@@ -190,11 +195,17 @@ def _cell(text):
     return text if len(text) <= MAX_CELL_CHARS else text[: MAX_CELL_CHARS - 1] + "…"
 
 
-def planner_input(deck):
-    """The deck's text and structure for the planner: every plannable ID, no binaries."""
+def planner_input(deck, labels=None, only_slides=None):
+    """The deck's text and structure for the planner: every plannable ID, no binaries.
+
+    ``labels`` (slide number -> SlideLabel) adds the classifier's type and intent; ``only_slides``
+    restricts the output to those source slides (repairs).
+    """
     plannable = _plannable(deck)
     slides = []
     for s in deck.slides:
+        if only_slides is not None and s.number not in only_slides:
+            continue
         items = []
         boxes = {}
         for item_id in s.order:
@@ -232,6 +243,9 @@ def planner_input(deck):
         if not items:
             continue
         slide = {"slide": s.number, "items": items}
+        label = (labels or {}).get(s.number)
+        if label is not None:
+            slide["type"], slide["intent"] = label.type, label.intent
         if boxes:
             slide["boxes"] = boxes
         if s.hidden:
@@ -240,8 +254,8 @@ def planner_input(deck):
     return {"slides": slides}
 
 
-def _user_message(deck, feedback):
-    content = json.dumps(planner_input(deck), ensure_ascii=False, separators=(",", ":"))
+def _user_message(deck, feedback, labels=None):
+    content = json.dumps(planner_input(deck, labels), ensure_ascii=False, separators=(",", ":"))
     msg = f"Plan the layout for this deck.\n\n<deck>\n{content}\n</deck>"
     if feedback:
         lines = list(feedback)[:MAX_FEEDBACK_LINES]
@@ -252,6 +266,21 @@ def _user_message(deck, feedback):
             f"and return a complete new plan.\n<problems>\n{problems}\n</problems>"
         )
     return msg
+
+
+def repair_message(deck, plan, faults, labels=None):
+    """Ask for replacement planned slides for the source slides in ``faults`` (source -> fault lines)."""
+    sources = sorted(faults)
+    content = json.dumps(planner_input(deck, labels, only_slides=sources), ensure_ascii=False, separators=(",", ":"))
+    current = json.dumps([ps.to_dict() for ps in plan.slides if ps.source_slide in sources], ensure_ascii=False)
+    lines = [f"- Source slide {n}: {line}" for n in sources for line in faults[n]][:MAX_FEEDBACK_LINES]
+    return (
+        "Some rendered slides failed our layout checks. Re-plan only the source slides listed here and return "
+        f"planned slides for just those source slides ({', '.join(str(n) for n in sources)}), with every item of "
+        "each exactly once.\n\n"
+        f"<deck>\n{content}\n</deck>\n\n<current_plan>\n{current}\n</current_plan>\n\n"
+        "<faults>\n" + "\n".join(lines) + "\n</faults>"
+    )
 
 
 def structured_to_plan_dict(data):
@@ -278,13 +307,20 @@ class ClaudePlanner:
         self.effort = effort
         self.pricing = pricing
 
-    def plan(self, deck, feedback=None):
+    def plan(self, deck, feedback=None, labels=None):
+        return self._request(_user_message(deck, feedback, labels))
+
+    def repair(self, deck, plan, faults, labels=None, attempt=1):
+        """Replacement planned slides for the faulted source slides only (the pipeline splices them in)."""
+        return self._request(repair_message(deck, plan, faults, labels))
+
+    def _request(self, user):
         started = time.monotonic()
         try:
             result = self.provider.complete_json(
                 model=self.model,
                 system=SYSTEM_PROMPT,
-                user=_user_message(deck, feedback),
+                user=user,
                 schema=PLAN_SCHEMA,
                 effort=self.effort,
             )
@@ -314,10 +350,26 @@ class HeuristicPlanner:
     name = "heuristic"
     model = None
 
-    def plan(self, deck, feedback=None):
+    def plan(self, deck, feedback=None, labels=None):
         started = time.monotonic()
         plan = plan_deck(deck)
         return PlanAttempt(
             planner=self.name, model=None, plan=plan, usage=Usage(0, 0), cost_usd=0.0,
             duration_ms=int((time.monotonic() - started) * 1000), raw=plan.to_dict(),
+        )
+
+    def repair(self, deck, plan, faults, labels=None, attempt=1):
+        """The plainest safe plan for each faulted source slide, plainer on each attempt."""
+        from .plan import Plan
+
+        started = time.monotonic()
+        items = _plannable(deck)
+        slides = []
+        for n in sorted(faults):
+            own = [items[i] for i in deck.slides[n - 1].order if i in items]
+            slides.extend(fallback_plan(n, own, level=attempt))
+        partial = Plan(slides=slides)
+        return PlanAttempt(
+            planner=self.name, model=None, plan=partial, usage=Usage(0, 0), cost_usd=0.0,
+            duration_ms=int((time.monotonic() - started) * 1000), raw=partial.to_dict(),
         )

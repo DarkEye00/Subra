@@ -212,3 +212,55 @@ def test_anthropic_provider_rejects_unusable_stops(stop_reason):
 def test_system_prompt_describes_the_new_layouts():
     assert "### agenda" in SYSTEM_PROMPT and "### timeline" in SYSTEM_PROMPT and "### image_full" in SYSTEM_PROMPT
     assert "three times in a row" in SYSTEM_PROMPT
+
+
+# --- repairs: re-plan only the slides that failed layout checks ------------
+
+def test_repair_request_lists_only_faulted_slides_and_their_faults(deck):
+    from polisher.plan import parse_plan
+
+    provider = FakeProvider([structured([GOOD[1], GOOD[1]])])
+    plan = parse_plan({"slides": GOOD})
+    ClaudePlanner(provider, model="claude-sonnet-5").repair(
+        deck, plan, {2: ["Planned slide 2 (layout stats): text does not fit its box even at 12pt"]})
+    user = provider.calls[0]["user"]
+    assert "s2-t2" in user and "s3-tb1" not in user
+    assert "does not fit" in user and "<current_plan>" in user and '"layout": "stats"' in user
+    assert provider.calls[0]["schema"] == PLAN_SCHEMA and provider.calls[0]["system"] == SYSTEM_PROMPT
+
+
+def test_repair_output_becomes_a_partial_plan(deck):
+    from polisher.plan import parse_plan
+
+    part_a = {"source_slide": 2, "layout": "bullets", "slots": {"title": ["s2-t1"], "body": ["s2-t2"]}}
+    part_b = {"source_slide": 2, "layout": "bullets", "slots": {"body": ["s2-t3", "s2-t4"]}}
+    provider = FakeProvider([structured([part_a, part_b])])
+    attempt = ClaudePlanner(provider, model="claude-sonnet-5").repair(deck, parse_plan({"slides": GOOD}), {2: ["x"]})
+    assert attempt.error is None
+    assert [p.source_slide for p in attempt.plan.slides] == [2, 2]
+    assert attempt.plan.slides[1].slots["body"] == ["s2-t3", "s2-t4"]
+
+
+def test_heuristic_repair_returns_fallback_parts(deck):
+    from polisher.heuristic import plan_deck
+    from polisher.planner import HeuristicPlanner
+
+    attempt = HeuristicPlanner().repair(deck, plan_deck(deck), {2: ["x"], 6: ["y"]}, attempt=1)
+    assert attempt.error is None and attempt.cost_usd == 0
+    assert sorted({p.source_slide for p in attempt.plan.slides}) == [2, 6]
+    assert all(p.layout in ("bullets", "chart") for p in attempt.plan.slides)
+
+
+def test_planner_input_carries_labels(deck):
+    from polisher.classify import SlideLabel
+
+    data = planner_input(deck, labels={1: SlideLabel("title", "Opens the review")})
+    assert data["slides"][0]["type"] == "title" and data["slides"][0]["intent"] == "Opens the review"
+    assert "type" not in data["slides"][1]
+    only = planner_input(deck, only_slides=[3])
+    assert [s["slide"] for s in only["slides"]] == [3]
+
+
+def test_system_prompt_has_a_repairs_section():
+    assert "## Repairs" in SYSTEM_PROMPT and "never shrinks text below 12pt" in SYSTEM_PROMPT
+    assert "first-pass classifier" in SYSTEM_PROMPT
