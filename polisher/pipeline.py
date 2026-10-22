@@ -176,7 +176,7 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
     with _timed(timings, "qa"):
         qa = check_deck(output_path, report, theme_obj)
     state = _Verified(plan, report, verification, qa)
-    passes = run.repair_loop(state, planner, labels, max_repair_passes)
+    run.repair_loop(state, planner, labels, max_repair_passes)
 
     previews = []
     if vision is not None:
@@ -187,7 +187,8 @@ def polish(input_path, output_path, theme, planner, escalation=None, render_fn=r
     return PolishResult(
         ok=True, output_path=output_path, slide_count=info.slide_count, attempts=run.attempts,
         render_report=state.report, verification=state.verification, qa=state.qa, final_plan=state.plan.to_dict(),
-        labels=labels, timings_ms=timings, previews=previews, repair_passes=passes, vision_ran=vision is not None,
+        labels=labels, timings_ms=timings, previews=previews, repair_passes=run.repair_passes,
+        vision_ran=vision is not None,
     )
 
 
@@ -211,6 +212,7 @@ class _Run:
         self.before_attempt, self.on_attempt = before_attempt, on_attempt
         self.timings = timings
         self.attempts = []
+        self.repair_passes = 0
         self.attempted_sources = set()  # sources ever sent back to the planner
         self.fallback_sources = set()
 
@@ -290,10 +292,11 @@ class _Run:
         sources = self._repairable(state)
         while sources and passes < max_passes:
             passes += 1
+            self.repair_passes += 1
             with _timed(self.timings, "repair"):
                 number = self._start(planner)
                 attempt = planner.repair(self.deck, state.plan, state.qa.faults_by_source(), labels=labels,
-                                         attempt=passes)
+                                         attempt=self.repair_passes)
                 self.attempted_sources.update(sources)
                 record = AttemptRecord(
                     number=number, planner=attempt.planner, model=attempt.model, usage=attempt.usage,
@@ -323,7 +326,6 @@ class _Run:
                     replacements[n] = fallback_plan(n, own, level=FALLBACK_LEVEL)
                 if self._try_replacements(state, replacements, None):
                     self.fallback_sources.update(sources)
-        return passes
 
     def vision_pass(self, state, vision, planner, labels, preview_dir, preview_fn, max_passes):
         from .vision import review_deck

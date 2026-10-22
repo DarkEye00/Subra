@@ -13,16 +13,24 @@ from .render.themes import THEMES
 from .validate import ValidationError
 
 
-def _planners(kind, classify="on"):
-    """(planner, escalation, classifier) for the CLI: heuristic runs make no API calls at all."""
+def _agents(kind, classify="on", vision_qa=False):
+    """(planner, escalation, classifier, vision) for the CLI. Heuristic runs make no API calls unless vision
+    QA is asked for, which always needs the API."""
     from .classify import ClaudeClassifier, HeuristicClassifier
     from .planner import ClaudePlanner, HeuristicPlanner
 
-    if kind == "heuristic":
-        return HeuristicPlanner(), None, HeuristicClassifier() if classify == "on" else None
-    from .ai import AnthropicProvider
+    provider = None
+    if kind == "claude" or vision_qa:
+        from .ai import AnthropicProvider
 
-    provider = AnthropicProvider()
+        provider = AnthropicProvider()
+    vision = None
+    if vision_qa:
+        from .vision import VisionQA
+
+        vision = VisionQA(provider, os.environ.get("VISION_MODEL", "claude-haiku-5-5"))
+    if kind == "heuristic":
+        return HeuristicPlanner(), None, HeuristicClassifier() if classify == "on" else None, vision
     planner = ClaudePlanner(provider, os.environ.get("PLANNER_MODEL", "claude-sonnet-5"),
                             effort=os.environ.get("PLANNER_EFFORT", "medium"))
     escalation = ClaudePlanner(provider, os.environ.get("ESCALATION_MODEL", "claude-opus-5-5"),
@@ -30,7 +38,7 @@ def _planners(kind, classify="on"):
     classifier = None
     if classify == "on":
         classifier = ClaudeClassifier(provider, os.environ.get("CLASSIFIER_MODEL", "claude-haiku-5-5"))
-    return planner, escalation, classifier
+    return planner, escalation, classifier, vision
 
 
 def main(argv=None):
@@ -42,6 +50,8 @@ def main(argv=None):
     ap.add_argument("--classifier", default="on", choices=["on", "off"],
                     help="label each slide's type and intent first, as hints for the planner (default on)")
     ap.add_argument("--preview", metavar="DIR", help="also render PNG thumbnails into DIR")
+    ap.add_argument("--vision-qa", action="store_true",
+                    help="score every rendered slide with a vision model and repair low scores (needs --preview)")
     ap.add_argument("--report", metavar="FILE", help="write a JSON report of the run")
     ap.add_argument("--repair-passes", type=int, default=2, metavar="N",
                     help="how many times slides that fail layout checks go back to the planner (default 2)")
@@ -54,10 +64,13 @@ def main(argv=None):
     if not args.output:
         ap.error("-o/--output is required")
 
-    planner, escalation, classifier = _planners(args.planner, args.classifier)
+    if args.vision_qa and not args.preview:
+        ap.error("--vision-qa needs --preview DIR")
+    planner, escalation, classifier, vision = _agents(args.planner, args.classifier, args.vision_qa)
     try:
         result = polish(args.input, args.output, theme=args.theme, planner=planner, escalation=escalation,
-                        classifier=classifier, max_repair_passes=args.repair_passes)
+                        classifier=classifier, vision=vision, preview_dir=args.preview,
+                        max_repair_passes=args.repair_passes)
     except ValidationError as e:
         print(f"Rejected: {e.message}", file=sys.stderr)
         return 2
@@ -103,8 +116,10 @@ def main(argv=None):
         return 1
     print(f"verified, wrote {result.output_path}")
     if args.preview:
-        from .preview import render_previews
+        pngs = result.previews
+        if not pngs:
+            from .preview import render_previews
 
-        pngs = render_previews(result.output_path, args.preview)
+            pngs = render_previews(result.output_path, args.preview)
         print(f"{len(pngs)} previews in {args.preview}")
     return 0

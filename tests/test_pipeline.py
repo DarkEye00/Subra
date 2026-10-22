@@ -1,5 +1,6 @@
 import copy
 import re
+from pathlib import Path
 
 import pytest
 from pptx import Presentation
@@ -313,11 +314,7 @@ def test_two_failed_repairs_fall_back_and_flag_the_slide(tmp_path):
 
 def test_heuristic_planner_repairs_by_splitting(tmp_path):
     # one 4,000-character paragraph can't be split, so the slide stays flagged, but the run never fails
-    src = _long_deck(tmp_path, paragraphs=1)
-    prs = Presentation(src)
-    prs.slides[1].placeholders[1].text_frame.paragraphs[0].runs[0].text = "detail " * 570
-    prs.save(src)
-    result = polish(src, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
+    result = polish(_unsplittable_deck(tmp_path), tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner())
     assert result.ok and result.verification.passed
     assert result.qa_report["flagged_slides"] == [2]
     assert result.qa_report["slides"][1]["faults"][0]["kind"] == "overflow"
@@ -410,3 +407,82 @@ def test_classifier_outage_does_not_fail_the_job(tmp_path, deck_path):
     assert result.ok and result.labels is None and result.qa_report["labels"] is None
     assert result.attempts[0].stage == "classify" and result.attempts[0].error == "rate limited"
     assert seen[0] == (1, "claude-haiku-5-5") and result.qa_report["cost_usd"]["classify"] == pytest.approx(0.001)
+
+
+# --- vision QA behind a flag (Task 10) --------------------------------------
+
+def fake_preview_fn(pptx_path, out_dir, dpi=60):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(1, len(Presentation(pptx_path).slides) + 1):
+        p = out_dir / f"slide-{i}.png"
+        p.write_bytes(b"\x89PNG fake")
+        paths.append(p)
+    return paths
+
+
+class ScriptedVision:
+    """Scores every slide 5 except those in ``low`` on the first review; later reviews score everything 5."""
+
+    name, model = "claude", "claude-haiku-5-5"
+
+    def __init__(self, low=(), outage=False):
+        self.low, self.outage, self.calls = set(low), outage, []
+
+    def review(self, pngs, indexes):
+        from polisher.vision import SlideReview, VisionAttempt
+
+        self.calls.append(list(indexes))
+        if self.outage:
+            return VisionAttempt(None, self.model, Usage(10, 0), 0.001, 1, error="rate limited", retryable=True)
+        first = len(self.calls) == 1
+        reviews = {i: SlideReview(i, 2.5 if first and i in self.low else 5.0,
+                                  ["body: cramped"] if first and i in self.low else []) for i in indexes}
+        return VisionAttempt(reviews, self.model, Usage(500 * len(indexes), 50), 0.002, 1)
+
+
+def test_vision_faults_trigger_a_repair_and_previews_are_returned(tmp_path, deck_path):
+    vision = ScriptedVision(low=[2])
+    result = polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), vision=vision,
+                    preview_dir=tmp_path / "previews", preview_fn=fake_preview_fn)
+    assert result.ok and result.qa_report["vision_qa"] is True
+    assert len(result.previews) == 7 and all(p.exists() for p in result.previews)
+    assert result.repair_passes == 1
+    assert [a.stage for a in result.attempts] == ["plan", "vision", "repair", "vision"]
+    assert vision.calls[0] == [1, 2, 3, 4, 5, 6, 7] and vision.calls[1] == [2]
+    slides = result.qa_report["slides"]
+    assert slides[1]["vision_score"] == 5.0 and slides[1]["repaired"] is True
+    assert result.qa_report["flagged_slides"] == [] and "vision" in result.timings_ms and "previews" in result.timings_ms
+    assert result.qa_report["cost_usd"]["vision"] == pytest.approx(0.004)
+
+
+def _unsplittable_deck(tmp_path):
+    """A cover and one slide whose single 4,000-character paragraph can't fit or be split."""
+    src = _long_deck(tmp_path, paragraphs=1)
+    prs = Presentation(src)
+    prs.slides[1].placeholders[1].text_frame.paragraphs[0].runs[0].text = "detail " * 570
+    prs.save(src)
+    return src
+
+
+def test_vision_only_reviews_slides_that_passed_the_code_checks(tmp_path):
+    vision = ScriptedVision()
+    result = polish(_unsplittable_deck(tmp_path), tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(),
+                    vision=vision, preview_dir=tmp_path / "previews", preview_fn=fake_preview_fn)
+    assert result.qa_report["flagged_slides"] == [2]
+    assert vision.calls[0] == [1]  # slide 2 still had a deterministic fault
+
+
+def test_vision_outage_does_not_fail_the_job(tmp_path, deck_path):
+    out = tmp_path / "out.pptx"
+    result = polish(deck_path, out, theme="navy", planner=HeuristicPlanner(), vision=ScriptedVision(outage=True),
+                    preview_dir=tmp_path / "previews", preview_fn=fake_preview_fn)
+    assert result.ok and out.exists() and result.qa_report["flagged_slides"] == []
+    assert [a.stage for a in result.attempts] == ["plan", "vision"] and result.attempts[1].error == "rate limited"
+    assert len(result.previews) == 7
+
+
+def test_vision_needs_a_preview_dir(tmp_path, deck_path):
+    with pytest.raises(ValueError):
+        polish(deck_path, tmp_path / "out.pptx", theme="navy", planner=HeuristicPlanner(), vision=ScriptedVision())
