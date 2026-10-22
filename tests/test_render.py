@@ -188,3 +188,57 @@ def test_long_list_of_short_lines_flows_into_two_columns(tmp_path):
                   if sh.has_text_frame and sh.text_frame.text.startswith("Group")]
     assert len(body_boxes) == 2
     assert verify(deck, extract_deck(out)).passed
+
+
+# --- Task 2: 12pt floor and named shapes ------------------------------------
+
+def _run_sizes(prs, in_tables):
+    """Explicit run sizes (pt) on every slide, either inside tables or outside them."""
+    sizes = []
+    for slide in prs.slides:
+        for sh in slide.shapes:
+            if getattr(sh, "has_table", False) and sh.has_table:
+                if in_tables:
+                    for cell in sh.table.iter_cells():
+                        sizes += [r.font.size.pt for p in cell.text_frame.paragraphs for r in p.runs if r.font.size]
+            elif sh.has_text_frame and not in_tables:
+                sizes += [r.font.size.pt for p in sh.text_frame.paragraphs for r in p.runs if r.font.size]
+    return sizes
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_no_text_below_twelve_points_on_the_business_deck(tmp_path, theme):
+    from deckbuilder import build_business_deck
+
+    src = build_business_deck(tmp_path / "b.pptx")
+    deck = extract_deck(src)
+    out, _ = render_to(tmp_path, deck, plan_deck(deck), theme, source=src)
+    sizes = _run_sizes(Presentation(out), in_tables=False)
+    assert sizes and min(sizes) >= 12
+    assert min(_run_sizes(Presentation(out), in_tables=True)) >= 12
+
+
+def test_long_table_floors_at_ten_points_and_is_flagged(tmp_path):
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[5])
+    s.shapes.title.text = "Every branch"
+    tbl = s.shapes.add_table(30, 4, Inches(0.5), Inches(1.5), Inches(9), Inches(5)).table
+    for r in range(30):
+        for c in range(4):
+            tbl.cell(r, c).text = f"Branch {r}" if c == 0 else f"{r * 10 + c},{c}00"
+    prs.save(tmp_path / "t.pptx")
+    deck = extract_deck(tmp_path / "t.pptx")
+    out, report = render_to(tmp_path, deck, plan_deck(deck), source=tmp_path / "t.pptx")
+    sizes = _run_sizes(Presentation(out), in_tables=True)
+    assert 10 <= min(sizes) < 12
+    assert report.overflow_slides == [1]
+    assert report.slides[0]["min_pt"] < 12
+    assert verify(deck, extract_deck(out)).passed
+
+
+def test_drawn_shapes_are_named(tmp_path, rich):
+    out, _ = render_to(tmp_path, rich, plan_deck(rich))
+    names = {sh.name for slide in Presentation(out).slides for sh in slide.shapes}
+    assert {"SUBRA decor", "SUBRA text", "SUBRA table", "SUBRA chart"} <= names, names
+    # the chart slide with a text panel draws a card
+    assert "SUBRA card" in names

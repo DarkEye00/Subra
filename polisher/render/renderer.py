@@ -43,6 +43,8 @@ CONTENT_TOP_NO_TITLE = 0.75
 CONTENT_BOTTOM = 6.8
 GAP = 0.35
 PAD = 0.3
+MIN_PT = 12.0  # the smallest text size anywhere (17 Oct build plan)
+TABLE_FLOOR_PT = 10.0  # a table that can't fit at 12pt may shrink to this and is flagged
 FOOTER_PLACEHOLDERS = {"ftr", "dt", "sldNum"}
 # locked objects whose content has a fixed text size: never enlarge them
 NO_UPSCALE = {"equation", "group", "smartart", "audio"}
@@ -87,7 +89,7 @@ class TStyle:
 
 @dataclass
 class RenderReport:
-    slides: list = field(default_factory=list)  # [{index, source_slide, layout, overflow}]
+    slides: list = field(default_factory=list)  # [{index, source_slide, layout, overflow, min_pt}]
     dropped_backgrounds: list = field(default_factory=list)  # picture backgrounds the theme replaced
     changes: list = field(default_factory=list)  # human-readable log of notable changes
 
@@ -160,11 +162,13 @@ class _Renderer:
                 index += 1
                 self.slide, self.source, self.original = slide, number, original
                 self.overflow, self.dark, self._back = False, False, 0
+                self.min_pt = 999.0
                 self.zones = self._zones(slide)
                 getattr(self, f"_layout_{ps.layout}")(ps)
                 placed.update(ps.ids())
                 report.slides.append(
-                    {"index": index, "source_slide": number, "layout": ps.layout, "overflow": self.overflow}
+                    {"index": index, "source_slide": number, "layout": ps.layout, "overflow": self.overflow,
+                     "min_pt": self.min_pt}
                 )
             for slide in slides:
                 inplace.prune_timing(slide._element)
@@ -275,16 +279,17 @@ class _Renderer:
             top = CONTENT_TOP_NO_TITLE
         return slide, self._avoid(Box(MX, top, self.W - 2 * MX, CONTENT_BOTTOM - top), vertical=True)
 
-    def _body_style(self, max_pt=28, min_pt=12, color=None, anchor=MSO_ANCHOR.TOP):
+    def _body_style(self, max_pt=28, min_pt=MIN_PT, color=None, anchor=MSO_ANCHOR.TOP):
         t = self.t
         return TStyle(t.body_font, color or t.text, max_pt, min_pt, anchor=anchor, bullet_color=t.accent)
 
     # --- decoration -------------------------------------------------------
 
-    def _rect(self, slide, box, color, shape=MSO_SHAPE.RECTANGLE, radius=None):
+    def _rect(self, slide, box, color, shape=MSO_SHAPE.RECTANGLE, radius=None, name="SUBRA decor"):
         if any(box.intersects(z) for z in self.zones):
             return None  # slide shapes draw over the master: never cover a logo with decoration
         sp = slide.shapes.add_shape(shape, *self._emu(box))
+        sp.name = name
         sp.fill.solid()
         sp.fill.fore_color.rgb = _rgb(color)
         sp.line.fill.background()
@@ -301,7 +306,7 @@ class _Renderer:
         return sp
 
     def _card(self, slide, box, strip=True):
-        self._rect(slide, box, self.t.surface, MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.04)
+        self._rect(slide, box, self.t.surface, MSO_SHAPE.ROUNDED_RECTANGLE, radius=0.04, name="SUBRA card")
         if strip:
             self._rect(slide, Box(box.x + 0.25, box.y, 0.7, 0.07), self.t.accent)
 
@@ -454,7 +459,7 @@ class _Renderer:
         card_w = (stats_area.w - GAP * (cols - 1)) / cols
         max_card_h = (stats_area.h - GAP * (rows - 1)) / rows
         value_h = value_size * line_height_ratio(t.heading_font) / 72 / self.scale + 0.1
-        label_style = TStyle(t.body_font, t.text, 20, 11, bullets=False, para_space_em=0.25)
+        label_style = TStyle(t.body_font, t.text, 20, MIN_PT, bullets=False, para_space_em=0.25)
         label_box = Box(0, 0, card_w - 2 * PAD, max_card_h - 2 * PAD - 0.15 - value_h)
         label_fits = [self._fit(labels, label_style, label_box) for _, labels in parts if labels]
         label_size = min((f.size for f in label_fits), default=16)
@@ -491,6 +496,8 @@ class _Renderer:
     def _write_stat(self, slide, box, value_runs, labels, entry, value_size, label_size):
         t = self.t
         shape = slide.shapes.add_textbox(*self._emu(box))
+        shape.name = "SUBRA text"
+        self.min_pt = min(self.min_pt, value_size, label_size)
         tf = shape.text_frame
         _prepare_frame(tf, MSO_ANCHOR.TOP, fits=True)
         tf.clear()
@@ -515,7 +522,7 @@ class _Renderer:
         slide, area = self._content_slide(ps)
         visuals, body = self._ids(ps, "visuals"), self._ids(ps, "body")
         if body:
-            style = self._body_style(18, 11)
+            style = self._body_style(18, MIN_PT)
             body_h = min(self._fit(body, style, Box(0, 0, area.w, 1.4)).height / 72 / self.scale + 0.1, 1.4)
             self._text(slide, Box(area.x, area.y + area.h - body_h, area.w, body_h), body, style)
             area = Box(area.x, area.y, area.w, area.h - body_h - 0.3)
@@ -529,7 +536,7 @@ class _Renderer:
             vis_w = area.w * 0.63
             panel = Box(area.x + vis_w + GAP, area.y, area.w - vis_w - GAP, area.h)
             self._card(slide, panel)
-            self._text(slide, panel.inset(PAD), body, self._body_style(20, 11, anchor=MSO_ANCHOR.MIDDLE))
+            self._text(slide, panel.inset(PAD), body, self._body_style(20, MIN_PT, anchor=MSO_ANCHOR.MIDDLE))
             area = Box(area.x, area.y, vis_w, area.h)
         self._place_visuals(slide, visuals, area, stacked=bool(body))
         return slide
@@ -598,8 +605,8 @@ class _Renderer:
     def _table(self, slide, item, cell):
         t = self.t
         widths = [cell.w * f for f in item.col_widths]
-        size, fits = 9.0, False
-        for candidate in range(20, 8, -1):
+        size, fits = TABLE_FLOOR_PT, False
+        for candidate in range(18, int(TABLE_FLOOR_PT) - 1, -1):
             heights = self._row_heights(item, widths, candidate)
             if sum(heights) <= cell.h:
                 size, fits = float(candidate), True
@@ -608,10 +615,12 @@ class _Renderer:
         if fits:  # breathe: grow rows toward a comfortable height while the table still fits
             comfy = min(0.55, cell.h / item.rows)
             heights = [max(h, comfy) for h in heights]
-        if not fits:
+        if not fits or size < MIN_PT:  # the table only fits below the 12pt floor, or not at all
             self.overflow = True
+        self.min_pt = min(self.min_pt, size)
         gf = slide.shapes.add_table(item.rows, item.cols, self._in(cell.x), self._in(cell.y), self._in(cell.w),
                                     self._in(sum(heights)))
+        gf.name = "SUBRA table"
         table = gf.table
         table.first_row = item.header_row
         table.horz_banding = False
@@ -684,6 +693,7 @@ class _Renderer:
 
     def _chart(self, slide, item, cell):
         gf = slide.shapes.add_chart(XL_CHART_TYPE[item.chart_type], *self._emu(cell), _chart_data(item))
+        gf.name = "SUBRA chart"
         self._style_chart(gf.chart, item)
 
     def _style_chart(self, chart, item):
@@ -781,8 +791,10 @@ class _Renderer:
             fit.fits = self._fit(items, TStyle(**{**style.__dict__, "max_pt": size, "min_pt": size}), box).fits
         if not fit.fits:
             self.overflow = True
+        self.min_pt = min(self.min_pt, fit.size)
         if shape is None:
             shape = slide.shapes.add_textbox(*self._emu(box))
+            shape.name = "SUBRA text"
         else:
             shape.left, shape.top, shape.width, shape.height = self._emu(box)
         tf = shape.text_frame
