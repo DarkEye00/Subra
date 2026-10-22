@@ -12,6 +12,7 @@ __pycache__/
 
 # Local data
 media/
+test-decks/
 staticfiles/
 out/
 *.sqlite3
