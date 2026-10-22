@@ -53,6 +53,12 @@ LAYOUTS = {
             (TITLE, Slot("subtitle", "text", "Optional short line under the section heading.")),
         ),
         Layout(
+            "agenda",
+            "Contents or outline slide: 3 to 7 items shown with large accent numbers, one paragraph per item. "
+            "Use for agenda, contents, outline and 'what we'll cover' slides.",
+            (TITLE, Slot("items", "text", "The items, in order. One paragraph each.", min_items=3, max_items=7)),
+        ),
+        Layout(
             "bullets",
             "Title plus a list of points. The default for text slides. Keeps paragraph levels and bullets.",
             (TITLE, Slot("body", "text", "The points, in original order.")),
@@ -106,6 +112,18 @@ LAYOUTS = {
                 Slot("visuals", "visual", "The image(s).", min_items=1, max_items=4),
                 Slot("body", "text", "Text shown beside the images."),
             ),
+        ),
+        Layout(
+            "image_full",
+            "One photo or other visual fills the slide, with the title on a band along the bottom. "
+            "Use when a slide is a single large picture plus a title and nothing else.",
+            (TITLE, Slot("visuals", "visual", "The one picture.", min_items=1, max_items=1)),
+        ),
+        Layout(
+            "timeline",
+            "Title plus 3 to 6 steps or dates on a horizontal line, one paragraph per node. "
+            "Use for roadmaps, milestones, project phases and histories.",
+            (TITLE, Slot("steps", "text", "The steps, in order. One paragraph each.", min_items=3, max_items=6)),
         ),
         Layout(
             "quote",

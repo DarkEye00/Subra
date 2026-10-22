@@ -71,3 +71,31 @@ def test_slide_without_content_is_blank(tmp_path):
     plan = plan_deck(deck)
     assert plan.slides[1].layout == "blank"
     assert validate_plan(plan, deck) == []
+
+
+def test_agenda_slide_gets_the_agenda_layout(tmp_path):
+    from deckbuilder import build_business_deck
+
+    deck = extract_deck(build_business_deck(tmp_path / "b.pptx"))
+    plan = plan_deck(deck)
+    assert plan.slides[1].layout == "agenda"
+    assert len(plan.slides[1].slots["items"]) == 5
+    assert validate_plan(plan, deck) == []
+
+
+def test_single_large_picture_gets_image_full(tmp_path):
+    import io
+
+    from deckbuilder import photo_bytes
+
+    def build(prs):
+        bullets_slide(prs, "Cover", ["x"])
+        s = prs.slides.add_slide(prs.slide_layouts[5])
+        s.shapes.title.text = "Our new hub"
+        s.shapes.add_picture(io.BytesIO(photo_bytes(seed=2)), Inches(0.5), Inches(1.5), Inches(9))
+        bullets_slide(prs, "After", ["a long enough paragraph so this is not treated as a closing quote slide" * 2])
+
+    deck = deck_from(tmp_path, build)
+    plan = plan_deck(deck)
+    assert plan.slides[1].layout == "image_full"
+    assert validate_plan(plan, deck) == []

@@ -11,6 +11,8 @@ from .plan import Plan, PlannedSlide, StatEntry, _plannable
 LEADING_NUMBER = re.compile(
     r"^\s*((?:KES|KSh|Ksh|USD|US\$|\$|€|£)?\s?[+-]?\d[\d,.]*\s?(?:%|bn|m|k|x|\+)?)(?=\s|$)"
 )
+AGENDA_TITLE = re.compile(r"\b(agenda|contents|outline|overview|what we.ll cover)\b", re.I)
+MIN_HERO_AREA = 0.4  # share of the slide a lone picture must cover to become image_full
 MAX_BODY_CHARS = 1100
 MAX_BODY_PARAGRAPHS = 14
 VISUAL_CAPACITY = {"table": 2, "chart": 2, "image_text": 4}
@@ -43,6 +45,9 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
 
     if visuals:
         kinds = {v.kind for v in visuals}
+        hero = visuals[0]
+        if len(visuals) == 1 and hero.kind == "image" and not rest and hero.pos[2] * hero.pos[3] >= MIN_HERO_AREA:
+            return [PlannedSlide(source_slide, "image_full", slots(title=titles, visuals=[hero.id]))]
         layout = "table" if kinds == {"table"} else "image_text" if kinds <= {"image", "locked"} else "chart"
         cap = VISUAL_CAPACITY[layout]
         chunks = [visuals[i:i + cap] for i in range(0, len(visuals), cap)]
@@ -64,6 +69,10 @@ def plan_items(source_slide, items, is_first_slide=False, is_last_slide=False):
         if not titles:
             titles, subs = subs[:1], subs[1:]
         return [PlannedSlide(source_slide, "section", slots(title=titles, subtitle=subs))]
+
+    title_text = " ".join(t.text for t in texts if t.id in titles)
+    if titles and not subs and AGENDA_TITLE.search(title_text) and 3 <= len(body) <= 7 and all(t.level == 0 for t in body):
+        return [PlannedSlide(source_slide, "agenda", slots(title=titles, items=[t.id for t in body]))]
 
     stats = _stat_entries(body)
     if stats and not subs:

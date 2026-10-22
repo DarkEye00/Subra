@@ -298,6 +298,8 @@ class _Renderer:
             sp._element.remove(style)
         if radius is not None:
             sp.adjustments[0] = radius
+        if name == "SUBRA overlay":  # drawn over the content, e.g. the title band of image_full
+            return sp
         # decoration sits behind everything, including the kept pictures and objects
         tree = slide.shapes._spTree
         tree.remove(sp._element)
@@ -403,6 +405,62 @@ class _Renderer:
                     self._text(slide, b, p, style, size=size)
                 return slide
         self._text(slide, area, body, style)
+        return slide
+
+    def _layout_agenda(self, ps):
+        t = self.t
+        slide, area = self._content_slide(ps)
+        items = self._ids(ps, "items")
+        if not items:
+            return slide
+        style = TStyle(t.body_font, t.text, 28, MIN_PT, bullets=False, para_space_em=0.7)
+        fit = self._text(slide, Box(area.x, area.y + 0.1, area.w, area.h - 0.1), items, style)
+        box = next(sh for sh in slide.shapes if sh.name == "SUBRA text" and sh.text_frame.text.startswith(
+            normalize_text(items[0].text)[:20]))
+        for p in box.text_frame.paragraphs:
+            _agenda_numbering(p, fit.size, t.accent, t.heading_font)
+        return slide
+
+    def _layout_timeline(self, ps):
+        t = self.t
+        slide, area = self._content_slide(ps)
+        steps = self._ids(ps, "steps")
+        n = len(steps)
+        if not n:
+            return slide
+        colw = area.w / n
+        line_y = area.y + 0.9
+        self._rect(slide, Box(area.x + colw / 2, line_y, colw * (n - 1), 0.06), t.line)
+        for i in range(n):
+            cx = area.x + colw / 2 + i * colw
+            self._rect(slide, Box(cx - 0.18, line_y - 0.15, 0.36, 0.36), t.accent, MSO_SHAPE.OVAL)
+        style = TStyle(t.body_font, t.text, 20, MIN_PT, bullets=False, align=PP_ALIGN.CENTER, para_space_em=0.2)
+        boxes = [Box(area.x + i * colw + 0.1, line_y + 0.45, colw - 0.2, area.h - 1.5) for i in range(n)]
+        size = min(self._fit([step], style, box).size for step, box in zip(steps, boxes))
+        for step, box in zip(steps, boxes):
+            self._text(slide, box, [step], style, size=size)
+        return slide
+
+    def _layout_image_full(self, ps):
+        t = self.t
+        slide = self._take_slide(t.bg)
+        band_h = 1.3
+        self._place_visuals(slide, self._ids(ps, "visuals"), Box(0, 0, self.W, CANVAS_H - band_h), stacked=False)
+        band = self._rect(slide, Box(0, CANVAS_H - band_h, self.W, band_h), t.primary, name="SUBRA overlay")
+        titles = self._ids(ps, "title")
+        if titles:
+            color = t.on_primary if band is not None else t.title  # no band when a logo sits there
+            shape = self._title_shape()
+            self._text(
+                slide, self._avoid(Box(MX, CANVAS_H - band_h + 0.2, self.W - 2 * MX, band_h - 0.4)), titles,
+                TStyle(t.heading_font, color, 32, 20, bold=t.heading_bold, override_runs=True,
+                       anchor=MSO_ANCHOR.MIDDLE, line_spacing=0.95, para_space_em=0.1, bullets=False),
+                shape=shape,
+            )
+            if shape is not None:  # the placeholder came before the picture and the band; show it on top
+                tree = slide.shapes._spTree
+                tree.remove(shape._element)
+                tree.append(shape._element)
         return slide
 
     def _layout_two_column(self, ps):
@@ -885,6 +943,24 @@ def _prepare_frame(tf, anchor, fits):
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
     tf.vertical_anchor = anchor
     tf.auto_size = MSO_AUTO_SIZE.NONE if fits else MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+
+
+def _agenda_numbering(p, size, color, font):
+    """Large accent numbers in the heading font; auto-numbers are bullets, so they add no text to the deck."""
+    _set_bullet(p, 0, "number", "arabicPeriod", size, color, None)
+    pPr = p._p.get_or_add_pPr()
+    hang = Pt(size * 2.2)
+    pPr.set("marL", str(hang))
+    pPr.set("indent", str(-hang))
+    clr = pPr.find(qn("a:buClr"))
+    anchor = clr if clr is not None else pPr.find(qn("a:buAutoNum"))
+    sz = pPr.makeelement(qn("a:buSzPct"), {"val": "150000"})
+    bu_font = pPr.makeelement(qn("a:buFont"), {"typeface": font})
+    if clr is not None:
+        clr.addnext(sz)
+    else:
+        anchor.addprevious(sz)
+    sz.addnext(bu_font)
 
 
 def _no_bullet(p, level):

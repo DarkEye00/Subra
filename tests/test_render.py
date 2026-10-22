@@ -2,12 +2,13 @@ import copy
 
 import pytest
 from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE
 from pptx.util import Inches
 
 from deckbuilder import build_rich_deck
 from polisher.extract import extract_deck
 from polisher.heuristic import plan_deck
-from polisher.plan import parse_plan
+from polisher.plan import parse_plan, validate_plan
 from polisher.render.renderer import render
 from polisher.render.themes import THEMES, get_theme
 from polisher.verify import verify
@@ -242,3 +243,95 @@ def test_drawn_shapes_are_named(tmp_path, rich):
     assert {"SUBRA decor", "SUBRA text", "SUBRA table", "SUBRA chart"} <= names, names
     # the chart slide with a text panel draws a card
     assert "SUBRA card" in names
+
+
+# --- Task 3: agenda, timeline and image_full ---------------------------------
+
+def _new_layouts_deck(path):
+    """Cover, an agenda, a four-step journey, and one large photo with a title."""
+    import io
+
+    from deckbuilder import photo_bytes
+
+    prs = Presentation()
+    s = prs.slides.add_slide(prs.slide_layouts[0])
+    s.shapes.title.text = "Safari Fresh Foods"
+    s.placeholders[1].text = "Board update"
+    s = prs.slides.add_slide(prs.slide_layouts[1])
+    s.shapes.title.text = "Agenda"
+    tf = s.placeholders[1].text_frame
+    tf.text = "Where we are"
+    for item in ("Market", "Financials", "Operations", "Plans for 2027"):
+        tf.add_paragraph().text = item
+    s = prs.slides.add_slide(prs.slide_layouts[1])
+    s.shapes.title.text = "Our journey"
+    tf = s.placeholders[1].text_frame
+    tf.text = "2023: founded in Nairobi"
+    for step in ("2024: first cold-chain hub", "2025: 12 counties served", "2026: Mombasa hub opened"):
+        tf.add_paragraph().text = step
+    s = prs.slides.add_slide(prs.slide_layouts[5])
+    s.shapes.title.text = "The Mombasa hub"
+    s.shapes.add_picture(io.BytesIO(photo_bytes(seed=1)), Inches(0.5), Inches(1.5), Inches(9))
+    prs.save(path)
+    return path
+
+
+NEW_LAYOUTS_PLAN = {"slides": [
+    {"source_slide": 1, "layout": "title", "slots": {"title": ["s1-t1"], "subtitle": ["s1-t2"]}},
+    {"source_slide": 2, "layout": "agenda", "slots": {"title": ["s2-t1"], "items": ["s2-t2", "s2-t3", "s2-t4", "s2-t5", "s2-t6"]}},
+    {"source_slide": 3, "layout": "timeline", "slots": {"title": ["s3-t1"], "steps": ["s3-t2", "s3-t3", "s3-t4", "s3-t5"]}},
+    {"source_slide": 4, "layout": "image_full", "slots": {"title": ["s4-t1"], "visuals": ["s4-i1"]}},
+]}
+
+
+@pytest.fixture
+def new_layouts(tmp_path):
+    src = _new_layouts_deck(tmp_path / "new.pptx")
+    deck = extract_deck(src)
+    plan = parse_plan(NEW_LAYOUTS_PLAN)
+    assert validate_plan(plan, deck) == []
+    return src, deck, plan
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_new_layouts_round_trip(tmp_path, new_layouts, theme):
+    src, deck, plan = new_layouts
+    out, report = render_to(tmp_path, deck, plan, theme, source=src)
+    result = verify(deck, extract_deck(out))
+    assert result.passed, result.problems
+    assert report.overflow_slides == []
+
+
+def test_agenda_numbers_are_bullets_not_text(tmp_path, new_layouts):
+    from pptx.oxml.ns import qn
+
+    src, deck, plan = new_layouts
+    out, _ = render_to(tmp_path, deck, plan, source=src)
+    slide = Presentation(out).slides[1]
+    items = next(sh for sh in slide.shapes if sh.has_text_frame and sh.text_frame.text.startswith("Where we are"))
+    paragraphs = items.text_frame.paragraphs
+    assert len(paragraphs) == 5
+    assert all(p._p.pPr is not None and p._p.pPr.find(qn("a:buAutoNum")) is not None for p in paragraphs)
+    assert verify(deck, extract_deck(out)).passed  # numbers are bullets, so no text or number was added
+
+
+def test_image_full_picture_fills_most_of_the_slide(tmp_path, new_layouts):
+    src, deck, plan = new_layouts
+    out, _ = render_to(tmp_path, deck, plan, source=src)
+    prs = Presentation(out)
+    pic = next(sh for sh in prs.slides[3].shapes if sh.shape_type == 13)
+    assert pic.width * pic.height >= 0.5 * prs.slide_width * prs.slide_height
+    assert prs.slides[3].shapes.title.text == "The Mombasa hub"
+
+
+def test_timeline_draws_one_marker_per_step(tmp_path, new_layouts):
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    src, deck, plan = new_layouts
+    out, _ = render_to(tmp_path, deck, plan, source=src)
+    shapes = Presentation(out).slides[2].shapes
+    ovals = [sh for sh in shapes if sh.name == "SUBRA decor" and sh.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE
+             and sh.auto_shape_type == MSO_SHAPE.OVAL]
+    assert len(ovals) == 4
+    labels = [sh for sh in shapes if sh.name == "SUBRA text"]
+    assert len(labels) == 4

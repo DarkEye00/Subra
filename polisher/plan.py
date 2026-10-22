@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from .layouts import BLANK, LAYOUTS
 from .verify import normalize_text
 
-TEXT_SLOT_PREFERENCE = ["body", "subtitle", "left", "right", "quote", "attribution"]
+TEXT_SLOT_PREFERENCE = ["body", "items", "steps", "subtitle", "left", "right", "quote", "attribution"]
 VISUAL_KINDS = {"table", "chart", "image", "locked", "background"}
 VISUAL_LAYOUT_FOR_KIND = {"table": "table", "chart": "chart", "image": "image_text", "locked": "image_text",
                           "background": "image_text"}
@@ -431,9 +431,9 @@ def _enforce_limits(plan, items, repairs):
                     overflow.append((slot.name, extra))
                 repairs.append(f"Slot '{slot.name}' over capacity; moved {len(extra)} item(s)")
 
-        # layouts whose required slot is empty fall back to a simpler layout
+        # layouts whose required slot is empty or under its minimum fall back to a simpler layout
         for slot in layout.slots:
-            if slot.min_items and not ps.slots.get(slot.name):
+            if slot.min_items and len(ps.slots.get(slot.name, [])) < slot.min_items:
                 texts = [x for x in ps.ids() if items[x].kind == "text"]
                 title = ps.slots.get("title", [])
                 body = [x for x in texts if x not in title]
@@ -442,7 +442,7 @@ def _enforce_limits(plan, items, repairs):
                 else:
                     ps.layout = "bullets"
                     ps.slots = {k: v for k, v in (("title", title), ("body", body)) if v}
-                repairs.append(f"Slot '{slot.name}' was empty; layout changed to '{ps.layout}'")
+                repairs.append(f"Slot '{slot.name}' had too few items; layout changed to '{ps.layout}'")
                 break
 
         for slot_name, extra in overflow:

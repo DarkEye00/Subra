@@ -207,3 +207,8 @@ def test_anthropic_provider_rejects_unusable_stops(stop_reason):
         AnthropicProvider(client=client).complete_json(model="m", system="s", user="u", schema={}, effort="low")
     assert stop_reason in str(exc.value)
     assert exc.value.usage is not None  # the tokens were still spent and must be logged
+
+
+def test_system_prompt_describes_the_new_layouts():
+    assert "### agenda" in SYSTEM_PROMPT and "### timeline" in SYSTEM_PROMPT and "### image_full" in SYSTEM_PROMPT
+    assert "three times in a row" in SYSTEM_PROMPT

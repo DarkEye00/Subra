@@ -88,8 +88,8 @@ def test_unknown_id_is_an_error(deck):
 
 
 def test_unknown_layout_is_an_error(deck):
-    errors = errors_for(deck, lambda s: s[1].update(layout="timeline"))
-    assert_error(errors, "timeline")
+    errors = errors_for(deck, lambda s: s[1].update(layout="mosaic"))
+    assert_error(errors, "mosaic")
 
 
 def test_slot_not_in_layout_is_an_error(deck):
@@ -188,7 +188,7 @@ def test_repair_rebuilds_a_missing_slide(deck):
 
 
 def test_repair_replaces_unknown_layout(deck):
-    plan, _ = repaired(deck, lambda s: s[1].update(layout="timeline"))
+    plan, _ = repaired(deck, lambda s: s[1].update(layout="mosaic"))
     assert plan.slides[1].layout == "bullets"
 
 
