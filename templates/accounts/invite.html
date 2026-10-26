@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Invitation: SUBRA{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-sm">
+  {% if invalid %}
+    <h1 class="text-3xl font-extrabold tracking-tight">This invitation has expired</h1>
+    <p class="mt-2 text-muted">It was withdrawn, already used, or is more than a week old. Ask for a new one.</p>
+  {% else %}
+    <h1 class="text-3xl font-extrabold tracking-tight">Join {{ invite.company.name }}</h1>
+    <p class="mt-2 text-muted">{{ invite.invited_by.email }} invited {{ invite.email }}. Members polish decks and pay for them from the company's shared credits.</p>
+    {% if user.is_authenticated %}
+      {% if reason %}
+        <p class="mt-6 rounded-lg bg-marigold-soft px-4 py-3 text-sm">{{ reason }}</p>
+      {% else %}
+        <form method="post" class="mt-6">{% csrf_token %}
+          <button class="btn-primary w-full">Join {{ invite.company.name }}</button>
+        </form>
+      {% endif %}
+    {% elif sign_in %}
+      <a href="{% url 'login' %}?next={% url 'accounts:invite_accept' token %}" class="btn-primary mt-6 w-full">Sign in as {{ invite.email }}</a>
+    {% else %}
+      <form method="post" class="mt-6">
+        {% csrf_token %}
+        {% include "accounts/_form_errors.html" %}
+        <p class="font-bold">Email</p>
+        <p class="mt-1 rounded-lg bg-page px-4 py-3">{{ invite.email }}</p>
+        {% include "accounts/_field.html" with field=form.password1 type="password" autocomplete="new-password" help="At least 8 characters, not only numbers." %}
+        {% include "accounts/_field.html" with field=form.password2 type="password" autocomplete="new-password" %}
+        <button class="btn-primary mt-6 w-full">Create account and join</button>
+      </form>
+      <p class="mt-4 text-sm text-muted">By creating an account you agree to the <a href="{% url 'terms' %}" class="underline underline-offset-2">terms</a> and <a href="{% url 'privacy' %}" class="underline underline-offset-2">privacy policy</a>.</p>
+    {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

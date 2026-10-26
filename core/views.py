@@ -8,6 +8,9 @@ def _legal_context():
         "unpaid_hours": settings.UNPAID_RETENTION_HOURS,
         "reviewed": settings.LEGAL_PAGES_REVIEWED,
         "support_email": settings.SUPPORT_EMAIL,
+        "subscriptions": settings.SUBSCRIPTIONS_ENABLED,
+        "grace_days": settings.SUBSCRIPTION_GRACE_DAYS,
+        "carryover": settings.CREDIT_CARRYOVER_MULTIPLE,
     }
 
 

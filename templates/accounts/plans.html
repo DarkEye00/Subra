@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Plans: SUBRA{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-4xl">
+  <h1 class="text-3xl font-extrabold tracking-tight">Plans for teams and regular users</h1>
+  <p class="mt-2 max-w-2xl text-muted">Pay monthly by card and spend credits on decks. Bigger plans cost less per credit. Paying per deck with M-Pesa still works for everyone.</p>
+
+  {% if live %}
+    <p class="mt-6 rounded-lg bg-ok-soft px-4 py-3 text-sm font-bold text-ok">Your company is on the {{ live.plan.name }} plan. <a href="{% url 'accounts:plan' %}" class="underline underline-offset-2">Manage it</a>.</p>
+  {% elif user.is_authenticated and not is_owner %}
+    <p class="mt-6 rounded-lg bg-page px-4 py-3 text-sm">Your company's owner chooses the plan.</p>
+  {% endif %}
+
+  <div class="mt-8 grid gap-4 sm:grid-cols-3">
+    {% for row in rows %}
+    <form method="post" action="{% url 'accounts:subscribe' %}" class="panel flex flex-col p-5"
+          onsubmit="this.querySelector('[data-go]').disabled = true">
+      {% csrf_token %}
+      <input type="hidden" name="plan" value="{{ row.plan.code }}">
+      <h2 class="text-xl font-bold">{{ row.plan.name }}</h2>
+      <p class="mt-2"><span class="text-3xl font-extrabold tracking-tight">KES {{ row.plan.price_kes|intcomma }}</span> <span class="text-muted">a month</span></p>
+      <p class="mt-1 font-bold">{{ row.plan.monthly_credits }} credits a month</p>
+      <p class="text-sm text-muted">About KES {{ row.plan.kes_per_credit }} a credit</p>
+      <ul class="mt-4 space-y-1 text-sm">
+        {% for name, n in row.decks %}<li>Up to {{ n }} {{ name|lower }} deck{{ n|pluralize }}</li>{% endfor %}
+      </ul>
+      <div class="mt-auto pt-5">
+        {% if not live and is_owner %}
+          {% if user.is_authenticated %}
+            <label class="flex items-start gap-2 text-sm">
+              <input type="checkbox" name="consent" value="1" required class="mt-1">
+              <span>{{ row.consent }}</span>
+            </label>
+            <button class="btn-primary mt-4 w-full" data-go>Subscribe with card</button>
+          {% else %}
+            <a href="{% url 'signup' %}?next={% url 'accounts:plans' %}" class="btn-primary w-full">Create an account</a>
+          {% endif %}
+        {% endif %}
+      </div>
+    </form>
+    {% endfor %}
+  </div>
+
+  {% if dev_billing and user.is_authenticated and not live and is_owner %}
+  <form method="post" action="{% url 'accounts:dev_subscribe' %}" class="mt-4 flex flex-wrap gap-2">
+    {% csrf_token %}
+    {% for row in rows %}<button name="plan" value="{{ row.plan.code }}" class="btn-quiet text-sm">Development: simulate {{ row.plan.name }}</button>{% endfor %}
+  </form>
+  {% endif %}
+
+  <section class="mt-10 grid gap-6 text-sm sm:grid-cols-2">
+    <div>
+      <h2 class="text-lg font-bold">How credits work</h2>
+      <p class="mt-1 text-muted">A deck costs credits by its size, and you see the price before polishing. Credits are taken only when you download, so a deck we can't polish costs nothing. Unused credits carry over while the plan renews, up to {{ carryover }} months' worth.</p>
+    </div>
+    <div>
+      <h2 class="text-lg font-bold">Cards, renewals and cancelling</h2>
+      <p class="mt-1 text-muted">Paystack charges your card in KES each month and emails a receipt; a USD card is converted by your bank. If a payment fails, your credits keep working for {{ grace_days }} days while you fix the card. Cancel any time: there's no further charge, and credits last until the end of the month you paid for. M-Pesa can't be charged monthly, so M-Pesa customers pay per deck.</p>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "billing/tests", "orders/tests"]
+testpaths = ["tests", "accounts/tests", "billing/tests", "orders/tests"]
 pythonpath = ["."]
 DJANGO_SETTINGS_MODULE = "subra.test_settings"
 addopts = ""

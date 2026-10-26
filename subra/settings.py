@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
     "accounts",
     "billing",
     "orders",
@@ -71,6 +72,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context_processors.billing_nav",
             ],
         },
     },
@@ -211,6 +213,9 @@ INVITE_TTL_DAYS = int(env("INVITE_TTL_DAYS", "7"))
 INVITE_RATE_LIMIT = (20, 3600)  # invites per hour, per user and per IP
 BILLING_RATE_LIMIT = (10, 600)  # subscribe, top-up, cancel, resume and card actions per 10 minutes
 WEBHOOK_RETENTION_DAYS = 90
+if SUBSCRIPTIONS_ENABLED and not DEBUG and not env("EMAIL_HOST"):
+    # Dunning, reminders, invites and password resets are all our emails: don't take card subscriptions without them.
+    raise ImproperlyConfigured("SUBSCRIPTIONS_ENABLED needs EMAIL_HOST (SMTP) when DJANGO_DEBUG is off")
 INTASEND_ENV = env("INTASEND_ENV", "sandbox")  # sandbox | live
 INTASEND_PUBLISHABLE_KEY = env("INTASEND_PUBLISHABLE_KEY", "")
 INTASEND_SECRET_KEY = env("INTASEND_SECRET_KEY", "")

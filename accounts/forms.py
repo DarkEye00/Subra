@@ -21,3 +21,23 @@ class EmailAuthenticationForm(AuthenticationForm):
 
     def clean_username(self):
         return self.cleaned_data["username"].lower()
+
+
+class InviteSignupForm(UserCreationForm):
+    """Sign up from an invitation: the email is the invited one, whatever is posted."""
+
+    class Meta:
+        model = User
+        fields = ()
+
+    def __init__(self, email, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.invited_email = email.lower()
+        self.instance.email = self.invited_email
+
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        user.email = self.invited_email
+        if commit:
+            user.save()
+        return user
