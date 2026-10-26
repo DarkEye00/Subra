@@ -1,0 +1,8 @@
+Hello,
+
+Your {{ plan }} plan is active. We've added {{ granted }} credits, so your balance is {{ balance }}.
+
+Your card ending {{ last4|default:"…" }} will be charged KES {{ price }} every month until you cancel. Paystack emails a receipt for each payment. You can cancel or change your card any time on the Plan & credits page:
+{{ site_url }}/accounts/plan/
+
+SUBRA

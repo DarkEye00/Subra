@@ -8,6 +8,7 @@ from .services import check_payment, expire_payment
 
 MAX_CHECKS = 6  # 60s after the push, then every 30s for ~3 minutes
 GIVE_UP_AFTER = timedelta(minutes=30)
+CARD_GIVE_UP_AFTER = timedelta(hours=24)  # a hosted checkout can sit open (3-D Secure, a customer who comes back)
 
 
 @shared_task
@@ -27,5 +28,7 @@ def sweep_pending_payments():
     """Safety net for lost tasks: re-check stale pending payments, and give up on very old ones."""
     now = timezone.now()
     for payment in Payment.objects.filter(status=Payment.Status.PENDING, created_at__lt=now - timedelta(minutes=2)):
-        if check_payment(payment) == "pending" and payment.created_at < now - GIVE_UP_AFTER:
-            expire_payment(payment)
+        give_up = CARD_GIVE_UP_AFTER if payment.channel == Payment.Channel.CARD else GIVE_UP_AFTER
+        if check_payment(payment) == "pending" and payment.created_at < now - give_up:
+            expire_payment(payment, reason="Checkout not completed" if payment.channel == Payment.Channel.CARD
+                           else "No confirmation from M-Pesa")

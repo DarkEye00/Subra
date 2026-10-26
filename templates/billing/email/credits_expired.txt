@@ -1,0 +1,8 @@
+Hello,
+
+Your {{ plan }} plan has ended{% if reason %} ({{ reason }}){% endif %}, and the {{ expired }} credits left on it have expired.
+
+You can still pay per deck with M-Pesa, or start a plan again whenever you like:
+{{ site_url }}/accounts/plans/
+
+SUBRA

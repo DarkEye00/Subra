@@ -56,12 +56,12 @@ class PaidFilter(admin.SimpleListFilter):
 
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
-    list_display = ("original_name", "user", "status", "paid", "slide_count", "price_kes", "ai_cost",
+    list_display = ("original_name", "user", "status", "paid", "paid_with", "slide_count", "price_kes", "ai_cost",
                     "payment_fees", "margin", "theme", "created_at")
-    list_filter = ("status", PaidFilter, "product_type", "theme", "waiting_for_capacity")
+    list_filter = ("status", PaidFilter, "paid_with", "product_type", "theme", "waiting_for_capacity")
     search_fields = ("original_name", "user__email", "public_id", "payments__provider_receipt", "payments__phone")
-    readonly_fields = ("public_id", "user", "product_type", "original_name", "slide_count", "tier", "price_kes",
-                       "status", "paid_at", "original_file", "result_file", "preview_images", "overflow_slides",
+    readonly_fields = ("public_id", "user", "company", "product_type", "original_name", "slide_count", "tier",
+                       "price_kes", "credit_cost", "status", "paid_at", "paid_with", "original_file", "result_file", "preview_images", "overflow_slides",
                        "qa_report",
                        "switch_error", "waiting_for_capacity", "failure_reason", "created_at", "updated_at",
                        "expires_at", "files_deleted_at", "ai_cost", "payment_fees", "margin")
@@ -96,7 +96,8 @@ class OrderAdmin(admin.ModelAdmin):
             return "-"
         cost = getattr(obj, "_ai_cost_kes", obj.ai_cost_kes)
         fees = getattr(obj, "_fees_kes", obj.payment_fees_kes)
-        return f"{Decimal(obj.price_kes) - cost - fees:.2f}"
+        revenue = obj.revenue_kes if obj.paid_with == "credits" else Decimal(obj.price_kes)
+        return f"{revenue - cost - fees:.2f}"
 
 
 @admin.register(AIJob)

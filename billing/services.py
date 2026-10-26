@@ -132,6 +132,8 @@ def apply_event(provider_name, event: PaymentEvent, source):
 
         if event.state == "pending":
             return payment
+        if event.state == "failed" and event.code == "abandoned" and payment.channel == Payment.Channel.CARD:
+            return payment  # Paystack calls a checkout "abandoned" until it's paid; the sweep gives up later
         if event.state == "failed":
             if payment.status == Payment.Status.PENDING:
                 _mark_failed(payment, event.code, event.reason or event.code)
@@ -180,6 +182,14 @@ def _alert_unrecorded(provider_name, event):
     if not reference.startswith("subra-"):
         return
     parts = reference.split("-")
+    if len(parts) >= 4 and parts[1] in ("sub", "top"):
+        what = "subscription" if parts[1] == "sub" else "top-up"
+        alert_admins(
+            f"Card payment with no record for company {parts[2]}: check and refund",
+            f"{provider_name} confirmed a {what} payment SUBRA has no record of (reference {reference}, KES "
+            f"{event.amount}). Check the Paystack dashboard, then refund it or add the credits by hand.",
+        )
+        return
     order_pk = parts[1] if len(parts) >= 3 else "unknown"
     alert_admins(
         f"Payment with no record for order {order_pk}: check and refund",

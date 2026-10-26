@@ -66,7 +66,13 @@ def month_summary(today=None):
                                      events__created_at__date__gte=start).distinct()
     count = generated.count()
     paid = generated.filter(paid_at__isnull=False).count()
+    from billing.models import Payment
+
+    plans = Payment.objects.filter(kind__in=["subscription", "renewal", "topup"], status="paid",
+                                   created_at__date__gte=start)
     return {
+        "paid_with_credits": generated.filter(paid_with="credits").count(),
+        "plan_revenue_kes": plans.aggregate(t=Sum("amount_kes"))["t"] or 0,
         "month": start,
         "paid_cost_kes": cost(jobs.filter(order__paid_at__isnull=False)),
         "unpaid_cost_kes": cost(jobs.filter(order__paid_at__isnull=True)),

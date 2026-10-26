@@ -120,7 +120,7 @@ def paid_order(ready_order):
 
 
 @pytest.fixture
-def subs_on(settings):
+def subs_on(db, settings):
     settings.SUBSCRIPTIONS_ENABLED = True
     return settings
 
@@ -176,3 +176,13 @@ def fund(company):
         return credits.adjust(company, n, None, "test credits")
 
     return give
+
+
+@pytest.fixture
+def on_commit(monkeypatch):
+    """Send customer emails straight away instead of after the (never-committed) test transaction."""
+    from types import SimpleNamespace
+
+    from billing import emails
+
+    monkeypatch.setattr(emails, "transaction", SimpleNamespace(on_commit=lambda fn: fn()))

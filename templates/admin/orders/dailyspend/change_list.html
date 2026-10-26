@@ -5,5 +5,6 @@
   <p>AI spent on decks that were paid for: <strong>KES {{ month.paid_cost_kes|floatformat:2 }}</strong></p>
   <p>AI spent on decks that weren't: <strong>KES {{ month.unpaid_cost_kes|floatformat:2 }}</strong></p>
   <p>Decks generated: {{ month.generated }}, paid for: {{ month.paid }}{% if month.paid_share is not None %} ({{ month.paid_share }}%){% endif %}</p>
+  {% if month.plan_revenue_kes or month.paid_with_credits %}<p>Paid with credits: {{ month.paid_with_credits }}. Plans and top-ups collected this month: <strong>KES {{ month.plan_revenue_kes }}</strong></p>{% endif %}
 </div>
 {% endblock %}

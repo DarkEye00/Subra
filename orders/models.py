@@ -189,9 +189,18 @@ class Order(models.Model):
         return sum((p.fee_kes for p in self.payments.filter(status="paid")), Decimal("0"))
 
     @property
+    def revenue_kes(self):
+        """What the deck earned: its KES price, or for a credit-paid deck what those credits were worth."""
+        if self.paid_with == "credits":
+            debit = self.credit_transactions.filter(kind="debit").first()
+            return debit.kes_value if debit else Decimal("0")
+        return Decimal(self.price_kes)
+
+    @property
     def margin_kes(self):
-        """Price minus AI cost and payment provider fees (only meaningful for paid orders)."""
-        return Decimal(self.price_kes) - self.ai_cost_kes - self.payment_fees_kes
+        """Revenue minus AI cost and payment provider fees (only meaningful for paid orders). A credit-paid deck
+        carries no fee of its own: the card fee sits on the subscription payment."""
+        return self.revenue_kes - self.ai_cost_kes - self.payment_fees_kes
 
     LOCKED_WORDS = {
         "video": "video", "audio": "audio", "ole": "embedded objects", "equation": "equations",
