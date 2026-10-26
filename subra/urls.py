@@ -15,6 +15,7 @@ urlpatterns = [
     path("orders/", include("orders.urls")),
     path("billing/", include("billing.urls")),
     path("accounts/signup/", signup, name="signup"),
+    path("accounts/", include("accounts.urls")),
     path("accounts/login/", auth_views.LoginView.as_view(
         template_name="accounts/login.html", authentication_form=EmailAuthenticationForm), name="login"),
     path("accounts/logout/", auth_views.LogoutView.as_view(), name="logout"),

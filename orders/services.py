@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import transaction
 
+from accounts.models import membership_for
 from billing.models import PriceTier, ProductType
 from polisher.extract import extract_deck
 from polisher.pipeline import UnsupportedContentError
@@ -70,16 +71,19 @@ def create_order(user, uploaded_file, product_type=ProductType.DECK_POLISH):
         tier = PriceTier.for_units(product_type, info.slide_count)
         if tier is None:
             raise UploadError("We don't have a price for a deck of this size yet.")
+        company = membership_for(user).company
         with transaction.atomic():
             order = Order.objects.create(
                 user=user, product_type=product_type, original_name=name, slide_count=info.slide_count,
-                tier=tier, price_kes=tier.price_kes, theme=default_theme(),
-                locked_summary=deck.locked_summary(),
+                tier=tier, price_kes=tier.price_kes, credit_cost=tier.credits, company=company,
+                theme=default_theme(), locked_summary=deck.locked_summary(),
             )
             with open(path, "rb") as f:
                 order.original_file.save("original.pptx", File(f), save=True)
-            OrderEvent.objects.create(order=order, to_status=S.QUOTED,
-                                      note=f"{info.slide_count} slides, {tier.name} tier, KES {tier.price_kes}")
+            note = f"{info.slide_count} slides, {tier.name} tier, KES {tier.price_kes}"
+            if settings.SUBSCRIPTIONS_ENABLED and tier.credits:
+                note += f" or {tier.credits} credits"
+            OrderEvent.objects.create(order=order, to_status=S.QUOTED, note=note)
     return order
 
 

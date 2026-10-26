@@ -82,9 +82,13 @@ class Order(models.Model):
     slide_count = models.PositiveIntegerField(default=0)
     tier = models.ForeignKey(PriceTier, on_delete=models.PROTECT, null=True, blank=True)
     price_kes = models.PositiveIntegerField(default=0)
+    credit_cost = models.PositiveIntegerField(default=0, help_text="Credits a subscriber pays instead (0 = not offered)")
+    company = models.ForeignKey("accounts.Company", on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name="orders", help_text="The uploader's company at upload")
     theme = models.ForeignKey(Theme, on_delete=models.PROTECT, null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.QUOTED)
     paid_at = models.DateTimeField(null=True, blank=True)
+    paid_with = models.CharField(max_length=10, blank=True, choices=[("mpesa", "M-Pesa"), ("credits", "Credits")])
     plan = models.JSONField(null=True, blank=True)  # the verified layout plan; theme switches re-render it
     result_file = models.FileField(upload_to=result_upload_path, blank=True)
     preview_images = models.JSONField(default=list, blank=True)  # storage names, in slide order
@@ -136,6 +140,17 @@ class Order(models.Model):
     @property
     def is_paid(self):
         return self.paid_at is not None
+
+    @property
+    def credits_paid_note(self):
+        """e.g. "Paid with 7 credits by wanjiku@example.co.ke" for a credit-paid deck."""
+        if self.paid_with != "credits":
+            return ""
+        debit = self.credit_transactions.filter(kind="debit").select_related("user").first()
+        if debit is None:
+            return "Paid with credits"
+        who = f" by {debit.user.email}" if debit.user_id else ""
+        return f"Paid with {-debit.delta} credits{who}"
 
     @property
     def has_pending_payment(self):

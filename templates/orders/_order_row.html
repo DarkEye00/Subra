@@ -5,7 +5,7 @@
       <span class="block text-sm text-muted">{{ order.slide_count }} slides, {{ order.created_at|date:"j M Y" }}</span>
     </span>
     <span class="flex shrink-0 flex-wrap justify-end gap-2">
-      {% if order.is_paid %}<span class="rounded-full bg-ok-soft px-3 py-1 text-sm font-bold text-ok">Paid</span>{% elif order.status == 'ready' %}<span class="rounded-full bg-marigold-soft px-3 py-1 text-sm font-bold text-ink">Unpaid</span>{% endif %}
+      {% if order.is_paid %}<span class="rounded-full bg-ok-soft px-3 py-1 text-sm font-bold text-ok">Paid{% if order.paid_with == 'credits' %}, credits{% endif %}</span>{% elif order.status == 'ready' %}<span class="rounded-full bg-marigold-soft px-3 py-1 text-sm font-bold text-ink">Unpaid</span>{% endif %}
       <span class="rounded-full px-3 py-1 text-sm font-bold
         {% if order.status == 'ready' %}bg-ok-soft text-ok{% elif order.status == 'failed' %}bg-danger-soft text-danger{% elif order.status == 'expired' %}bg-page text-muted{% else %}bg-marigold-soft text-ink{% endif %}">
         {{ order.get_status_display }}

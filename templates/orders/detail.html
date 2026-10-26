@@ -2,9 +2,9 @@
 {% block title %}{{ order.original_name }}: SUBRA{% endblock %}
 {% block content %}
 <div class="mx-auto max-w-3xl">
-  <a href="{% url 'orders:list' %}" class="text-sm font-bold text-muted hover:text-ink">My decks</a>
+  {% if is_uploader %}<a href="{% url 'orders:list' %}" class="text-sm font-bold text-muted hover:text-ink">My decks</a>{% else %}<a href="{% url 'accounts:plan' %}" class="text-sm font-bold text-muted hover:text-ink">Plan &amp; credits</a>{% endif %}
   <h1 class="mt-2 break-words text-3xl font-extrabold tracking-tight">{{ order.original_name }}</h1>
-  <p class="mt-1 text-muted">{{ order.slide_count }} slides</p>
+  <p class="mt-1 text-muted">{{ order.slide_count }} slides{% if not is_uploader %}, uploaded by {{ order.user.email }}{% endif %}</p>
 
   {% if order.locked_description and order.status != 'expired' %}
     <p class="mt-4 rounded-lg bg-page px-4 py-3 text-sm">{{ order.locked_description }} These are kept exactly as they are, and the slides are restyled around them.</p>
@@ -13,7 +13,10 @@
     <p class="mt-3 rounded-lg bg-marigold-soft px-4 py-3 text-sm">This deck links to external files that may not open on other computers. We keep the links as they are.</p>
   {% endif %}
 
-  {% if order.status == 'quoted' %}
+  {% if order.status == 'quoted' and not is_uploader %}
+    <div class="panel mt-8 p-6"><p class="text-muted">{{ order.user.email }} hasn't sent this deck for polishing yet.</p></div>
+
+  {% elif order.status == 'quoted' %}
     <form method="post" action="{% url 'orders:polish' order.public_id %}" class="mt-8"
           onsubmit="this.querySelector('[data-polish]').disabled = true; this.querySelector('[data-polish]').textContent = 'Starting…'">
       {% csrf_token %}
@@ -36,6 +39,7 @@
           <span class="text-lg font-bold">Price</span>
           <span class="text-3xl font-extrabold tracking-tight">KES {{ order.price_kes }}</span>
         </div>
+        {% if credits %}<p class="mt-1 text-right font-bold">or {{ order.credit_cost }} credits</p>{% endif %}
         <p class="mt-1 text-sm text-muted">{{ order.tier.name }} deck. You pay only after you see your deck.</p>
         {% if blocking %}
           <p class="mt-5 rounded-lg bg-marigold-soft px-4 py-3 text-sm">Pay for or discard <a href="{% url 'orders:detail' blocking.public_id %}" class="font-bold underline underline-offset-2">{{ blocking.original_name }}</a> first. You can have one unpaid deck at a time.</p>
@@ -44,7 +48,7 @@
         <p class="mt-3 text-sm text-muted">This takes one to three minutes. You'll see every slide before you decide to pay.</p>
       </div>
     </form>
-    {% include "orders/_discard.html" %}
+    {% if is_uploader %}{% include "orders/_discard.html" %}{% endif %}
 
   {% elif order.status == 'ready' or order.status == 'rerendering' %}
     {% if polling %}
@@ -53,18 +57,29 @@
       <div class="panel mt-8 p-5 sm:p-6">
         <h2 class="text-2xl font-bold tracking-tight">Your deck is ready</h2>
         <p class="mt-1 text-muted">{{ order.theme.name }} theme. Every word and number was checked against your original.</p>
+        {% if order.paid_with == 'credits' %}<p class="mt-3 text-sm font-bold">{{ order.credits_paid_note }}</p>{% endif %}
         <a href="{% url 'orders:download' order.public_id %}" class="btn-primary mt-5 w-full sm:w-auto">Download the .pptx</a>
         <p class="mt-3 text-sm text-muted">Files are deleted on {{ order.expires_at|date:"j M Y" }}.</p>
       </div>
+    {% elif not is_uploader %}
+      <div class="panel mt-8 p-5 sm:p-6">
+        <h2 class="text-2xl font-bold tracking-tight">Not paid for yet</h2>
+        <p class="mt-1 text-muted">{{ order.user.email }} can pay for this deck with credits or M-Pesa. You can download it once it's paid.</p>
+      </div>
     {% else %}
+      {% if credits %}{% include "orders/_credits.html" %}{% endif %}
       <form method="post" action="{% url 'orders:pay' order.public_id %}" class="panel mt-8 p-5 sm:p-6"
             onsubmit="this.querySelector('[data-pay]').disabled = true; this.querySelector('[data-pay]').textContent = 'Sending the M-Pesa prompt…'">
         {% csrf_token %}
         {% if last_payment.status == 'failed' %}
           <p class="mb-5 rounded-lg bg-danger-soft px-4 py-3 font-bold text-danger">{{ last_payment.customer_message }} You haven't been charged. You can try again.</p>
         {% endif %}
+        {% if credits %}
+        <h2 class="text-xl font-bold tracking-tight">Or pay KES {{ order.price_kes }} with M-Pesa</h2>
+        {% else %}
         <h2 class="text-2xl font-bold tracking-tight">Your redesigned deck is ready</h2>
         <p class="mt-1 text-muted">{{ order.theme.name }} theme. Every word and number was checked against your original. Look through the slides below, then pay to download the editable .pptx.</p>
+        {% endif %}
         <div class="mt-5 flex items-baseline justify-between gap-4">
           <span class="text-lg font-bold">Total</span>
           <span class="text-3xl font-extrabold tracking-tight">KES {{ order.price_kes }}</span>
@@ -89,7 +104,7 @@
     {% if order.switch_error %}
       <p class="mt-4 rounded-lg bg-danger-soft px-4 py-3 text-sm font-bold text-danger">{{ order.switch_error }}</p>
     {% endif %}
-    {% if order.status == 'ready' and order.plan %}
+    {% if order.status == 'ready' and order.plan and is_uploader %}
       <form method="post" action="{% url 'orders:theme' order.public_id %}" class="panel mt-8 p-5 sm:p-6">
         {% csrf_token %}
         <h2 class="text-lg font-bold">Try another theme</h2>
@@ -123,7 +138,7 @@
         <p class="mt-1 text-muted">We couldn't make preview images for this deck. The file itself passed every check.</p>
       {% endif %}
     </section>
-    {% include "orders/_discard.html" %}
+    {% if is_uploader %}{% include "orders/_discard.html" %}{% endif %}
 
   {% elif polling %}
     <div class="panel mt-8 p-6">{% include "orders/_status.html" with waited=0 %}</div>
@@ -133,7 +148,7 @@
       <h2 class="text-2xl font-bold tracking-tight">We couldn't polish this deck</h2>
       <p class="mt-2 text-muted">You haven't been charged. Our checks found that the redesign could lose some of your content, so we stopped. We've been told about it and will look into it.</p>
     </div>
-    {% include "orders/_discard.html" %}
+    {% if is_uploader %}{% include "orders/_discard.html" %}{% endif %}
 
   {% elif order.status == 'expired' %}
     <div class="panel mt-8 p-6">

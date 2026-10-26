@@ -137,7 +137,7 @@ def apply_event(provider_name, event: PaymentEvent, source):
                 _mark_failed(payment, event.code, event.reason or event.code)
             if event.amount:  # e.g. a partial payment: money moved, so a human must look
                 alert_admins(
-                    f"Partial or failed payment with money on order {payment.order_id}",
+                    f"Partial or failed payment with money on {_what(payment)}",
                     f"Payment {payment.pk} from {payment.phone} ended as {event.code} with amount KES {event.amount} "
                     f"(quoted KES {payment.amount_kes}). Check the provider dashboard and refund if needed.",
                 )
@@ -152,14 +152,25 @@ def apply_event(provider_name, event: PaymentEvent, source):
         if event.amount != Decimal(payment.amount_kes):
             _mark_failed(payment, event.code or "amount", f"Amount mismatch: paid {event.amount}, expected {payment.amount_kes}")
             alert_admins(
-                f"M-Pesa amount mismatch on order {payment.order_id}",
+                f"Amount mismatch on {_what(payment)}",
                 f"Payment {payment.pk} from {payment.phone} paid KES {event.amount}, but the quoted amount is "
                 f"KES {payment.amount_kes}. The order was not marked paid. Check and refund if needed.",
             )
             return payment
-        _mark_paid(payment, event)
+        if payment.kind == Payment.Kind.DECK:
+            _mark_paid(payment, event)
+        else:
+            from .subscriptions import settle_card_payment
+
+            settle_card_payment(payment, event)
         _check_starter_limit(payment)
     return payment
+
+
+def _what(payment):
+    if payment.kind == Payment.Kind.DECK:
+        return f"order {payment.order_id}"
+    return f"{payment.get_kind_display().lower()} payment {payment.pk} for {payment.company}"
 
 
 def _alert_unrecorded(provider_name, event):
@@ -182,7 +193,9 @@ def _alert_unrecorded(provider_name, event):
 def _fee(payment, event):
     if event.fee:
         return event.fee, False
-    estimate = (Decimal(payment.amount_kes) * Decimal(str(settings.PAYMENT_FEE_RATE))).quantize(Decimal("0.01"))
+    rate = settings.PAYMENT_FEE_RATE if payment.channel == Payment.Channel.MPESA else \
+        settings.PAYMENT_FEE_RATES.get(payment.channel, settings.PAYMENT_FEE_RATE)
+    estimate = (Decimal(payment.amount_kes) * Decimal(str(rate))).quantize(Decimal("0.01"))
     return estimate, True
 
 
@@ -222,8 +235,14 @@ def _mark_paid(payment, event):
         )
         return
     payment.save()
+    settle_order(order, paid_with="mpesa", note=f"Paid, M-Pesa receipt {event.receipt or '(from status check)'}")
+
+
+def settle_order(order, paid_with, note):
+    """Mark a locked order paid: the one place that unlocks a download (M-Pesa or credits)."""
     now = timezone.now()
     order.paid_at = now
+    order.paid_with = paid_with
     order.expires_at = now + timedelta(days=settings.FILE_RETENTION_DAYS)
-    order.save(update_fields=["paid_at", "expires_at", "updated_at"])
-    order.log(f"Paid, M-Pesa receipt {event.receipt or '(from status check)'}")
+    order.save(update_fields=["paid_at", "paid_with", "expires_at", "updated_at"])
+    order.log(note)

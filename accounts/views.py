@@ -1,4 +1,5 @@
 from django.contrib.auth import login
+from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect, render
 from django.utils.http import url_has_allowed_host_and_scheme
 
@@ -18,3 +19,17 @@ def signup(request):
     else:
         form = SignupForm()
     return render(request, "accounts/signup.html", {"form": form, "next": next_url})
+
+
+def _subscriptions_on():
+    from django.conf import settings
+    from django.http import Http404
+
+    if not settings.SUBSCRIPTIONS_ENABLED:
+        raise Http404
+
+
+@login_required
+def plan(request):
+    _subscriptions_on()
+    return render(request, "accounts/plan.html", {})
