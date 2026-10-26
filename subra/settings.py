@@ -154,6 +154,8 @@ CELERY_BEAT_SCHEDULE = {
     "delete-expired-files": {"task": "orders.tasks.delete_expired_files", "schedule": 3600.0},  # 48h promise
     "release-queued-orders": {"task": "orders.tasks.release_queued_orders", "schedule": 600.0},
     "sweep-pending-payments": {"task": "billing.tasks.sweep_pending_payments", "schedule": 300.0},
+    "subscriptions-hourly": {"task": "billing.tasks.subscriptions_hourly", "schedule": 3600.0},
+    "billing-daily": {"task": "billing.tasks.billing_daily", "schedule": 86400.0},
 }
 
 EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")

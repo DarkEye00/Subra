@@ -32,3 +32,19 @@ def sweep_pending_payments():
         if check_payment(payment) == "pending" and payment.created_at < now - give_up:
             expire_payment(payment, reason="Checkout not completed" if payment.channel == Payment.Channel.CARD
                            else "No confirmation from M-Pesa")
+
+
+@shared_task
+def subscriptions_hourly():
+    """Grace, lapse, period end, abandoned checkouts and missed renewals (subscriptions spec, section 7)."""
+    from .lifecycle import run_hourly
+
+    return run_hourly()
+
+
+@shared_task
+def billing_daily():
+    """Renewal reminders, the ledger check, webhook pruning and plan sync checks."""
+    from .lifecycle import run_daily
+
+    return run_daily()
