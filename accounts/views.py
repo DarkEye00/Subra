@@ -161,6 +161,9 @@ def plan_action(request):
             messages.success(request, "Your plan is back on. It renews as before.")
         elif action == "card":
             return redirect(subscriptions.card_update_link(request.user))
+        elif action == "rename":
+            companies.rename(request.user, request.POST.get("name", ""))
+            messages.success(request, "Company renamed.")
         elif action == "paynow":
             sub = subscriptions.live_subscription(membership_for(request.user).company)
             if sub is None or sub.status != sub.Status.PAST_DUE:
@@ -169,7 +172,7 @@ def plan_action(request):
                 request.user, sub.plan, consent_text(sub.plan) if request.POST.get("consent") else "", replace=True))
         else:
             raise Http404
-    except subscriptions.BillingError as e:
+    except (subscriptions.BillingError, companies.CompanyError) as e:
         messages.error(request, str(e))
     return redirect("accounts:plan")
 

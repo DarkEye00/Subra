@@ -127,6 +127,16 @@ def remove_member(owner, user_id):
     return membership.user
 
 
+def rename(owner, name):
+    company = _owner(owner)
+    name = " ".join((name or "").split())[:120]
+    if not name:
+        raise CompanyError("Enter a company name.")
+    company.name = name
+    company.save(update_fields=["name"])
+    return company
+
+
 def members(company):
     return list(company.memberships.select_related("user").order_by("-role", "created_at"))
 

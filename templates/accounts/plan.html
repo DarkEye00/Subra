@@ -3,7 +3,16 @@
 {% block content %}
 <div class="mx-auto max-w-3xl">
   <h1 class="text-3xl font-extrabold tracking-tight">Plan &amp; credits</h1>
+  {% if is_owner %}
+  <form method="post" action="{% url 'accounts:plan_action' %}" class="mt-2 flex flex-col gap-2 sm:flex-row">{% csrf_token %}
+    <label for="company-name" class="sr-only">Company name</label>
+    <input id="company-name" name="name" value="{{ company.name }}" maxlength="120" required class="field">
+    <button name="action" value="rename" class="btn-quiet shrink-0">Rename</button>
+  </form>
+  <p class="mt-1 text-sm text-muted">Members and invitations show this name.</p>
+  {% else %}
   <p class="mt-1 text-muted">{{ company.name }}</p>
+  {% endif %}
 
   <div class="panel mt-6 p-5 sm:p-6">
     <div class="flex flex-wrap items-baseline justify-between gap-4">

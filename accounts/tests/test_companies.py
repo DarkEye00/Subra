@@ -145,7 +145,7 @@ def test_invites_need_the_flag(user, company):
 
 def test_the_plans_page_shows_price_per_credit_and_decks(subs_on, client):
     html = client.get(reverse("accounts:plans")).content.decode()
-    assert "KES 2,000" in html and "40 credits a month" in html and "About KES 50.0 a credit" in html
+    assert "KES 2,000" in html and "40 credits a month" in html and "About KES 50 a credit" in html
     assert "Up to 10 small decks" in html and "Up to 4 large decks" in html
     assert "M-Pesa can't be charged monthly" in html
 
@@ -275,3 +275,13 @@ def test_legal_pages_describe_plans_only_when_they_exist(client, db, settings):
     assert "Plans and credits" in terms and "including top-ups" in terms and "7 days" in terms
     privacy = client.get(reverse("privacy")).content.decode()
     assert "last four digits" in privacy and "owner can see and download the decks" in privacy
+
+
+def test_the_owner_renames_the_company(subs_on, owner_client, client, company, member):
+    owner_client.post(reverse("accounts:plan_action"), {"action": "rename", "name": "  Acme   Ltd "})
+    company.refresh_from_db()
+    assert company.name == "Acme Ltd"
+    client.force_login(member)
+    client.post(reverse("accounts:plan_action"), {"action": "rename", "name": "Hijacked"})
+    company.refresh_from_db()
+    assert company.name == "Acme Ltd"

@@ -509,3 +509,13 @@ def test_sync_plans_creates_and_updates(db, fake):
     assert fake.calls[-1] == ("PUT", "/plan/PLN_team", {"name": "SUBRA Team", "amount": 550000, "currency": "KES",
                                                        "update_existing_subscriptions": True})
     assert Plan.objects.get(code="team").paystack_amount_kes == 5500
+
+
+def test_charges_made_elsewhere_on_the_account_stay_quiet(active, client, settings):
+    settings.ADMIN_ALERT_EMAIL = "ops@example.co.ke"
+    data = transaction("PAYLINK_1", plan_code="")
+    data["customer"]["customer_code"] = "CUS_someone"
+    sent = len(mail.outbox)
+    webhook(client, "charge.success", data)
+    assert len(mail.outbox) == sent
+    assert WebhookDelivery.objects.get(reference="PAYLINK_1").outcome == "ignored: not a SUBRA charge"

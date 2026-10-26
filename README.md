@@ -44,6 +44,17 @@ export DJANGO_DEBUG=1 POLISHER_PLANNER=heuristic   # or set ANTHROPIC_API_KEY an
 
 Without `REDIS_URL`, Celery tasks run inline. Without payment keys, DEBUG mode shows a "simulate a successful payment" button on a ready deck, so you can try the whole flow.
 
+### Plans with credits (off by default)
+
+Set `SUBSCRIPTIONS_ENABLED=1` to show plans, Plan & credits, and paying for decks with credits. Without `PAYSTACK_SECRET_KEY`, DEBUG mode shows "simulate" buttons on the plans page (start a plan) and the Plan & credits page (a renewal, a failed renewal). Beat runs the subscription jobs hourly and daily; without Redis, run them by hand:
+
+```bash
+.venv/bin/python manage.py billing_tick --daily                      # now
+.venv/bin/python manage.py billing_tick --now 2026-12-01T09:00:00+03:00   # pretend it's later
+```
+
+Going live: `manage.py sync_paystack_plans` creates the plans at Paystack (run it again after a price change; new subscribers are refused while a price is out of sync). Paystack's webhook URL stays `https://<your domain>/billing/webhooks/paystack/`. The prerequisites are in the [subscriptions spec](docs/superpowers/specs/2026-10-27-subscriptions-and-credits-design.md), section 11.
+
 ## Tests
 
 ```bash
@@ -52,7 +63,7 @@ Without `REDIS_URL`, Celery tasks run inline. Without payment keys, DEBUG mode s
 
 `scripts/record_paystack_fixtures.py` re-records the Paystack test-mode fixtures (test keys only).
 
-The tests cover validation (including the 25/100 MB limits), extraction of every locked object type and image case, verification, planning and repair, in-place rendering round trips for every layout and theme (12 layouts, no text below 12pt, no QA faults on the sample page), the deterministic QA checks and theme contrast, the repair loop and fallbacks, the classifier and vision stages against fake providers, the retry and escalation pipeline, payments (Paystack and IntaSend webhooks, signatures, idempotency, amount mismatches, late and duplicate payments, the Starter-limit alerts), generation before payment, theme switching from the saved plan, order processing and the QA report, the spend cap, file deletion, and the views.
+The tests cover validation (including the 25/100 MB limits), extraction of every locked object type and image case, verification, planning and repair, in-place rendering round trips for every layout and theme (12 layouts, no text below 12pt, no QA faults on the sample page), the deterministic QA checks and theme contrast, the repair loop and fallbacks, the classifier and vision stages against fake providers, the retry and escalation pipeline, payments (Paystack and IntaSend webhooks, signatures, idempotency, amount mismatches, late and duplicate payments, the Starter-limit alerts), generation before payment, theme switching from the saved plan, subscriptions (checkout, renewals, grace and lapse, cancel and resume, top-ups, refunds, the credits ledger and its cap, company invites and who may see which deck), order processing and the QA report, the spend cap, file deletion, and the views.
 
 ## Deploy (one DigitalOcean droplet, 4 GB RAM or more)
 

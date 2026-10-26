@@ -574,6 +574,8 @@ def _dispatch(event_type, data, payload, provider, apply_event):
             return "applied to payment"
         if record_renewal(data, provider=provider) is not None:
             return "renewal recorded"
+        if not data.get("plan"):
+            return "ignored: not a SUBRA charge"  # e.g. a payment link on the same Paystack account
         alert_admins("Paystack charge for no known plan",
                      f"Paystack sent charge.success for reference {reference} (KES "
                      f"{Decimal(str(data.get('amount') or 0)) / 100}), which matches no SUBRA payment or subscription. "

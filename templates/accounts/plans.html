@@ -20,7 +20,7 @@
       <h2 class="text-xl font-bold">{{ row.plan.name }}</h2>
       <p class="mt-2"><span class="text-3xl font-extrabold tracking-tight">KES {{ row.plan.price_kes|intcomma }}</span> <span class="text-muted">a month</span></p>
       <p class="mt-1 font-bold">{{ row.plan.monthly_credits }} credits a month</p>
-      <p class="text-sm text-muted">About KES {{ row.plan.kes_per_credit }} a credit</p>
+      <p class="text-sm text-muted">About KES {{ row.plan.kes_per_credit|floatformat:"-1" }} a credit</p>
       <ul class="mt-4 space-y-1 text-sm">
         {% for name, n in row.decks %}<li>Up to {{ n }} {{ name|lower }} deck{{ n|pluralize }}</li>{% endfor %}
       </ul>
