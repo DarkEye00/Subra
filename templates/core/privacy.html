@@ -11,6 +11,7 @@
   <li>Your decks: the file you upload, the polished file, and preview images of its slides.</li>
   <li>Payments: the M-Pesa number you pay from, the amount, the M-Pesa receipt number, and the status messages our payment provider sends us.</li>
   <li>Service records: order history and technical logs, such as processing times and costs.</li>
+  {% if subscriptions %}<li>Plans and company accounts: your company's name, the email addresses of its members and of people invited, who used how many credits on which deck, and, for card subscriptions, the last four digits, brand and expiry month of the card and Paystack's reference for it. Paystack holds the card itself; we never see or store the card number.</li>{% endif %}
 </ul>
 
 <h2>How long we keep it</h2>
@@ -18,12 +19,12 @@
 <p>We keep order and payment records (without the files) for as long as the law requires for accounting and tax, and your account until you ask us to close it.</p>
 
 <h2>Who can see your deck</h2>
-<p>Nobody at SUBRA opens your deck unless you ask us for help with an order. Files are stored in a private storage bucket, and download links expire after one hour.</p>
+<p>{% if subscriptions %}If you're a member of a company account, the company's owner can see and download the decks you upload while you're a member, and how many credits you used. Other members can't. {% endif %}Nobody at SUBRA opens your deck unless you ask us for help with an order. Files are stored in a private storage bucket, and download links expire after one hour.</p>
 
 <h2>Other companies involved</h2>
 <ul>
   <li><strong>Anthropic</strong> (Claude API): to plan the new layout, we send the text and structure of your slides, such as paragraphs, table sizes and chart names, to Anthropic's Claude API. We don't send your images. Anthropic processes this under its commercial terms.</li>
-  <li><strong>Paystack</strong> and <strong>Safaricom</strong> (M-Pesa): process your payment. Paystack receives your phone number, your email address and the amount.</li>
+  <li><strong>Paystack</strong> and <strong>Safaricom</strong> (M-Pesa): process your payment. Paystack receives your phone number, your email address and the amount.{% if subscriptions %} For card subscriptions, Paystack stores your card and charges it each month.{% endif %}</li>
   <li><strong>DigitalOcean</strong>: hosts our servers and file storage.</li>
 </ul>
 

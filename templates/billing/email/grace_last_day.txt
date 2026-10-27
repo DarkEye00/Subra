@@ -1,0 +1,8 @@
+Hello,
+
+This is the last reminder: your card payment for the {{ plan }} plan still hasn't gone through, and your {{ balance }} credits expire on {{ until|date:"j M Y, H:i" }}.
+
+Update your card or pay now with another card:
+{{ site_url }}/accounts/plan/
+
+SUBRA

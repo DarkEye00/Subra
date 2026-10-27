@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.humanize",
     "accounts",
     "billing",
     "orders",
@@ -71,6 +72,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "core.context_processors.billing_nav",
             ],
         },
     },
@@ -154,6 +156,8 @@ CELERY_BEAT_SCHEDULE = {
     "delete-expired-files": {"task": "orders.tasks.delete_expired_files", "schedule": 3600.0},  # 48h promise
     "release-queued-orders": {"task": "orders.tasks.release_queued_orders", "schedule": 600.0},
     "sweep-pending-payments": {"task": "billing.tasks.sweep_pending_payments", "schedule": 300.0},
+    "subscriptions-hourly": {"task": "billing.tasks.subscriptions_hourly", "schedule": 3600.0},
+    "billing-daily": {"task": "billing.tasks.billing_daily", "schedule": 86400.0},
 }
 
 EMAIL_BACKEND = env("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
@@ -182,7 +186,8 @@ AI_PRICING = PRICING
 AI_DAILY_CAP_USD = float(env("AI_DAILY_CAP_USD", "10"))
 USD_KES_RATE = float(env("USD_KES_RATE", "129.20"))
 CARD_FX_MARKUP = float(env("CARD_FX_MARKUP", "0.03"))
-PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.015"))  # estimate when the provider reports no fee
+PAYMENT_FEE_RATE = float(env("PAYMENT_FEE_RATE", "0.015"))  # M-Pesa estimate when the provider reports no fee
+PAYMENT_FEE_RATES = {"mpesa": PAYMENT_FEE_RATE, "card": float(env("CARD_FEE_RATE", "0.029"))}
 FILE_RETENTION_DAYS = int(env("FILE_RETENTION_DAYS", "7"))
 UNPAID_RETENTION_HOURS = int(env("UNPAID_RETENTION_HOURS", "48"))  # quoted, unpaid and failed decks (Amendment 2)
 # Privacy and terms pages show a "draft" banner until Joe has reviewed them (build plan, section 10).
@@ -199,6 +204,18 @@ THEME_SWITCH_RATE_LIMIT = (10, 3600)  # theme switches per hour, per user and pe
 PAYMENT_PROVIDER = env("PAYMENT_PROVIDER", "paystack")
 PAYSTACK_SECRET_KEY = env("PAYSTACK_SECRET_KEY", "")  # sk_test_... or sk_live_...; also verifies webhooks
 PAYSTACK_STARTER_LIMIT_KES = int(env("PAYSTACK_STARTER_LIMIT_KES", "250000"))  # 0 once the business is registered
+# Subscriptions with credits and company accounts (27 Oct spec). Paystack Plans run the monthly billing.
+SUBSCRIPTIONS_ENABLED = env_bool("SUBSCRIPTIONS_ENABLED", False)
+RENEWALS_PAUSED = env_bool("RENEWALS_PAUSED", False)  # stops every lapse and credit expiry, e.g. during an outage
+SUBSCRIPTION_GRACE_DAYS = int(env("SUBSCRIPTION_GRACE_DAYS", "7"))
+CREDIT_CARRYOVER_MULTIPLE = int(env("CREDIT_CARRYOVER_MULTIPLE", "2"))  # a grant never lifts the balance above this
+INVITE_TTL_DAYS = int(env("INVITE_TTL_DAYS", "7"))
+INVITE_RATE_LIMIT = (20, 3600)  # invites per hour, per user and per IP
+BILLING_RATE_LIMIT = (10, 600)  # subscribe, top-up, cancel, resume and card actions per 10 minutes
+WEBHOOK_RETENTION_DAYS = 90
+if SUBSCRIPTIONS_ENABLED and not DEBUG and not env("EMAIL_HOST"):
+    # Dunning, reminders, invites and password resets are all our emails: don't take card subscriptions without them.
+    raise ImproperlyConfigured("SUBSCRIPTIONS_ENABLED needs EMAIL_HOST (SMTP) when DJANGO_DEBUG is off")
 INTASEND_ENV = env("INTASEND_ENV", "sandbox")  # sandbox | live
 INTASEND_PUBLISHABLE_KEY = env("INTASEND_PUBLISHABLE_KEY", "")
 INTASEND_SECRET_KEY = env("INTASEND_SECRET_KEY", "")

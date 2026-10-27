@@ -1,0 +1,189 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Plan &amp; credits: SUBRA{% endblock %}
+{% block content %}
+<div class="mx-auto max-w-3xl">
+  <h1 class="text-3xl font-extrabold tracking-tight">Plan &amp; credits</h1>
+  {% if is_owner %}
+  <form method="post" action="{% url 'accounts:plan_action' %}" class="mt-2 flex flex-col gap-2 sm:flex-row">{% csrf_token %}
+    <label for="company-name" class="sr-only">Company name</label>
+    <input id="company-name" name="name" value="{{ company.name }}" maxlength="120" required class="field">
+    <button name="action" value="rename" class="btn-quiet shrink-0">Rename</button>
+  </form>
+  <p class="mt-1 text-sm text-muted">Members and invitations show this name.</p>
+  {% else %}
+  <p class="mt-1 text-muted">{{ company.name }}</p>
+  {% endif %}
+
+  <div class="panel mt-6 p-5 sm:p-6">
+    <div class="flex flex-wrap items-baseline justify-between gap-4">
+      <span class="text-lg font-bold">Credits</span>
+      <span class="text-4xl font-extrabold tracking-tight" data-balance>{{ balance }}</span>
+    </div>
+    {% if sub %}
+      <p class="mt-2 font-bold">{{ sub.plan.name }} plan: {{ sub.plan.monthly_credits }} credits a month for KES {{ sub.plan.price_kes|intcomma }}</p>
+      {% if sub.status == 'active' %}
+        <p class="mt-1 text-sm text-muted">Renews on {{ sub.renews_at|date:"j M Y" }}{% if sub.card_last4 %} with the card ending {{ sub.card_last4 }}{% endif %}.</p>
+        {% if is_owner and next_grant < sub.plan.monthly_credits %}
+          <p class="mt-3 rounded-lg bg-page px-4 py-3 text-sm">You have more than a month's credits, so the next renewal adds {{ next_grant }} instead of {{ sub.plan.monthly_credits }}: the balance carries over up to {{ cap }}.</p>
+        {% endif %}
+      {% elif sub.status == 'past_due' %}
+        <div class="mt-4 rounded-lg bg-danger-soft px-4 py-3 text-sm text-danger">
+          <p class="font-bold">{% if is_owner %}We couldn't charge your card{% if sub.card_last4 %} ending {{ sub.card_last4 }}{% endif %}.{% else %}Your company's card payment failed.{% endif %} Credits work until {{ sub.grace_ends_at|date:"j M Y, H:i" }}.</p>
+          {% if not is_owner %}<p class="mt-1">Ask {{ company.owner.email }} to update the company card.</p>{% endif %}
+        </div>
+        {% if is_owner %}
+        <div class="mt-4 grid gap-2 sm:grid-cols-2">
+          <form method="post" action="{% url 'accounts:plan_action' %}">{% csrf_token %}
+            <button name="action" value="card" class="btn-quiet w-full">Update card on Paystack</button>
+          </form>
+          <form method="post" action="{% url 'accounts:plan_action' %}">{% csrf_token %}
+            <label class="flex items-start gap-2 text-sm"><input type="checkbox" name="consent" value="1" required class="mt-1"><span>Start a fresh month today: charge KES {{ sub.plan.price_kes|intcomma }} now and every month until I cancel. My credits carry over.</span></label>
+            <button name="action" value="paynow" class="btn-primary mt-2 w-full">Pay now with a new card</button>
+          </form>
+        </div>
+        {% endif %}
+      {% elif sub.status == 'cancelling' %}
+        <p class="mt-3 rounded-lg bg-marigold-soft px-4 py-3 text-sm">Cancelled. No further charges. Credits work until {{ sub.renews_at|date:"j M Y" }}, then they expire.</p>
+        {% if is_owner and not sub.past_due_since %}
+        <form method="post" action="{% url 'accounts:plan_action' %}" class="mt-3">{% csrf_token %}
+          <button name="action" value="resume" class="btn-primary">Resume the plan</button>
+        </form>
+        {% endif %}
+      {% endif %}
+    {% elif is_owner %}
+      <p class="mt-2 text-muted">{% if past %}Your {{ past.plan.name }} plan ended on {{ past.ended_at|date:"j M Y" }}.{% else %}No plan yet.{% endif %} Without a plan you pay per deck with M-Pesa.</p>
+      <a href="{% url 'accounts:plans' %}" class="btn-primary mt-4">See plans</a>
+    {% else %}
+      <p class="mt-2 text-muted">{{ company.owner.email }} manages your company's plan. Without one, you pay per deck with M-Pesa.</p>
+    {% endif %}
+  </div>
+
+  {% if dev_billing and is_owner %}
+  <form method="post" action="{% url 'accounts:dev_subscribe' %}" class="mt-3 flex flex-wrap gap-2">{% csrf_token %}
+    <button name="what" value="renew" class="btn-quiet text-sm">Development: simulate a renewal</button>
+    <button name="what" value="fail" class="btn-quiet text-sm">Development: simulate a failed renewal</button>
+  </form>
+  {% endif %}
+
+  {% if not is_owner %}
+  <section class="panel mt-6 p-5 sm:p-6">
+    <h2 class="text-lg font-bold">Your usage this month</h2>
+    <p class="mt-1 text-muted">{% if my_usage %}{{ my_usage.1 }} credits on {{ my_usage.2 }} deck{{ my_usage.2|pluralize }}.{% else %}No credits used yet.{% endif %}</p>
+    <a href="{% url 'orders:list' %}" class="btn-quiet mt-4">My decks</a>
+  </section>
+  {% endif %}
+
+  {% if is_owner and sub %}
+  <section class="panel mt-6 p-5 sm:p-6" id="top-up">
+    <h2 class="text-lg font-bold">Top up</h2>
+    <p class="mt-1 text-sm text-muted">Pay by card or M-Pesa on Paystack's page. Top-up credits join your balance and expire with the plan if it ends.</p>
+    <div class="mt-4 flex flex-wrap gap-2">
+      {% for pack in packs %}
+      <form method="post" action="{% url 'accounts:topup' %}">{% csrf_token %}
+        <button name="pack" value="{{ pack.pk }}" class="btn-quiet">{{ pack.credits }} credits for KES {{ pack.price_kes|intcomma }}</button>
+      </form>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if is_owner %}
+  <section class="panel mt-6 p-5 sm:p-6">
+    <h2 class="text-lg font-bold">Members</h2>
+    <ul class="mt-3 divide-y divide-line">
+      {% for m in members %}
+      <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+        <span class="min-w-0"><span class="block truncate font-bold">{{ m.user.email }}</span>
+          <span class="block text-sm text-muted">{{ m.get_role_display }}{% for email, c, n in usage %}{% if email == m.user.email %}, {{ c }} credits this month{% endif %}{% endfor %}</span></span>
+        {% if not m.is_owner %}
+        <form method="post" action="{% url 'accounts:remove_member' m.user.pk %}" onsubmit="return confirm('Remove {{ m.user.email|escapejs }}? Their decks here stay with the company.')">{% csrf_token %}
+          <button class="btn-quiet text-sm">Remove</button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+      {% for i in invites %}
+      <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+        <span class="min-w-0"><span class="block truncate font-bold">{{ i.email }}</span>
+          <span class="block text-sm text-muted">Invited, until {{ i.expires_at|date:"j M" }}</span></span>
+        <form method="post" action="{% url 'accounts:revoke_invite' i.pk %}">{% csrf_token %}
+          <button class="btn-quiet text-sm">Withdraw</button>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="post" action="{% url 'accounts:invite' %}" class="mt-4 flex flex-col gap-2 sm:flex-row">{% csrf_token %}
+      <label for="invite-email" class="sr-only">Email to invite</label>
+      <input id="invite-email" name="email" type="email" required placeholder="colleague@company.co.ke" class="field">
+      <button class="btn-primary shrink-0">Invite</button>
+    </form>
+    <p class="mt-2 text-sm text-muted">Members use the company's credits for their own decks. They can't see each other's decks; you can download all of them.</p>
+  </section>
+
+  {% if orders %}
+  <section class="panel mt-6 p-5 sm:p-6">
+    <h2 class="text-lg font-bold">Company decks</h2>
+    <ul class="mt-3 divide-y divide-line">
+      {% for o in orders %}
+      <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+        <a href="{% url 'orders:detail' o.public_id %}" class="min-w-0 hover:underline">
+          <span class="block truncate font-bold">{{ o.original_name }}</span>
+          <span class="block text-sm text-muted">{{ o.user.email }}, {{ o.created_at|date:"j M" }}, {% if o.is_paid %}paid {% if o.paid_with == 'credits' %}with {{ o.credit_cost }} credits{% else %}by M-Pesa{% endif %}{% else %}{{ o.get_status_display|lower }}{% endif %}{% if o.status == 'ready' and not o.files_deleted_at %}, available until {{ o.expires_at|date:"j M" }}{% endif %}</span>
+        </a>
+        {% if o.is_paid and o.status == 'ready' and o.result_file %}
+          <a href="{% url 'orders:download' o.public_id %}" class="btn-quiet text-sm">Download</a>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if sub %}
+  <section class="panel mt-6 p-5 sm:p-6">
+    <h2 class="text-lg font-bold">Change plan</h2>
+    <p class="mt-1 text-sm text-muted">A new plan starts today and is charged now. Your credits carry over.</p>
+    <div class="mt-4 grid gap-3 sm:grid-cols-2">
+      {% for p, consent in other_plans %}
+      <form method="post" action="{% url 'accounts:subscribe' %}" class="rounded-lg border border-line p-4">{% csrf_token %}
+        <input type="hidden" name="plan" value="{{ p.code }}">
+        <p class="font-bold">{{ p.name }}: KES {{ p.price_kes|intcomma }}, {{ p.monthly_credits }} credits</p>
+        <label class="mt-2 flex items-start gap-2 text-sm"><input type="checkbox" name="consent" value="1" required class="mt-1"><span>{{ consent }}</span></label>
+        <button class="btn-quiet mt-3 w-full">Switch to {{ p.name }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    <div class="mt-6 flex flex-wrap gap-2">
+      {% if sub.status == 'active' %}
+      <form method="post" action="{% url 'accounts:plan_action' %}">{% csrf_token %}
+        <button name="action" value="card" class="btn-quiet">Change card on Paystack</button>
+      </form>
+      {% endif %}
+      {% if sub.status != 'cancelling' %}
+      <form method="post" action="{% url 'accounts:plan_action' %}" onsubmit="return confirm('Cancel the plan? No further charges; credits last until the end of the period you paid for.')">{% csrf_token %}
+        <button name="action" value="cancel" class="btn-quiet">Cancel plan</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if ledger %}
+  <section class="panel mt-6 p-5 sm:p-6">
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="text-lg font-bold">History</h2>
+      <a href="{% url 'accounts:usage_csv' %}" class="text-sm font-bold underline underline-offset-2">Download CSV</a>
+    </div>
+    <ul class="mt-3 divide-y divide-line text-sm">
+      {% for row in ledger %}
+      <li class="flex items-baseline justify-between gap-3 py-2">
+        <span class="min-w-0"><span class="font-bold">{{ row.get_kind_display }}</span> <span class="text-muted">{{ row.created_at|date:"j M Y" }}{% if row.note %}, {{ row.note }}{% endif %}</span></span>
+        <span class="shrink-0 font-bold {% if row.delta < 0 %}text-danger{% else %}text-ok{% endif %}">{% if row.delta > 0 %}+{% endif %}{{ row.delta }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

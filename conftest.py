@@ -117,3 +117,72 @@ def confirm_payment(db):
 @pytest.fixture
 def paid_order(ready_order):
     return _confirm_payment(ready_order)
+
+
+@pytest.fixture
+def subs_on(db, settings):
+    settings.SUBSCRIPTIONS_ENABLED = True
+    return settings
+
+
+@pytest.fixture
+def plan(db):
+    from billing.models import Plan
+
+    plan = Plan.objects.get(code="team")  # KES 5,000, 115 credits (seeded)
+    plan.paystack_plan_code = "PLN_team"
+    plan.save()
+    return plan
+
+
+@pytest.fixture
+def company(user):
+    from accounts.models import company_for
+
+    return company_for(user)
+
+
+@pytest.fixture
+def subscribed(company, plan):
+    """A live Team subscription with an empty balance."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from billing.models import Subscription
+
+    return Subscription.objects.create(
+        company=company, plan=plan, status=Subscription.Status.ACTIVE, email=company.owner.email,
+        paystack_subscription_code="SUB_team1", paystack_email_token="tok_1", paystack_customer_code="CUS_1",
+        paystack_customer_id="101", renews_at=timezone.now() + timedelta(days=20), periods_paid=1,
+        card_last4="4081", card_brand="visa")
+
+
+@pytest.fixture
+def member(db, company):
+    from accounts.models import Membership, User
+
+    person = User.objects.create_user("otieno@example.co.ke", "a-strong-password-1")
+    Membership.objects.create(company=company, user=person, role=Membership.Role.MEMBER, invited_by=company.owner)
+    return person
+
+
+@pytest.fixture
+def fund(company):
+    """fund(n): put n credits in the company balance with a staff adjustment."""
+    from billing import credits
+
+    def give(n):
+        return credits.adjust(company, n, None, "test credits")
+
+    return give
+
+
+@pytest.fixture
+def on_commit(monkeypatch):
+    """Send customer emails straight away instead of after the (never-committed) test transaction."""
+    from types import SimpleNamespace
+
+    from billing import emails
+
+    monkeypatch.setattr(emails, "transaction", SimpleNamespace(on_commit=lambda fn: fn()))

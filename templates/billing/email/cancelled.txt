@@ -1,0 +1,8 @@
+Hello,
+
+Your {{ plan }} plan is cancelled. Your card won't be charged again.
+
+Your credits still work until {{ until|date:"j M Y" }}, then they expire. Changed your mind? You can resume the plan before then:
+{{ site_url }}/accounts/plan/
+
+SUBRA

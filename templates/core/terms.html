@@ -11,8 +11,16 @@
 <h2>Prices and payment</h2>
 <p>You see the price before we start. We redesign your deck first; you look through every slide, and pay by M-Pesa only if you want to download it. Payment unlocks the download of the editable file.</p>
 
+{% if subscriptions %}
+<h2>Plans and credits</h2>
+<p>A plan is a monthly card subscription, charged in Kenyan shillings through Paystack, starting the day you subscribe and every month after until you cancel. If your card is in another currency, your bank converts the amount and may add its own fee. You see the amount and agree to the monthly charge before paying, and we email you three days before each charge.</p>
+<p>Each paid month adds the plan's credits to your company's balance. A deck costs the credits shown before you polish it, and they're taken only when you download it. Unused credits carry over while the plan renews, but a monthly addition never lifts the balance above {{ carryover }} months of the plan's credits. Top-up credits join the same balance.</p>
+<p>If a monthly charge fails, your credits keep working for {{ grace_days }} days. If no payment succeeds by then, the plan ends and all credits in the balance expire, including top-ups. If you cancel, you're not charged again, and the credits last until the end of the month you paid for, then expire. Changing plan starts the new plan on the day you change it, at its full price; your credits carry over. Credits have no cash value and can't be transferred to another company.</p>
+<p>A company account has one owner, who manages the plan, the card and the members, and can download the decks members upload. Members use the shared credits for their own decks.</p>
+{% endif %}
+
 <h2>Refunds</h2>
-<p>You only pay for a deck you've seen. If you pay twice, or pay for a deck that has already been deleted, we refund the extra payment to the M-Pesa number you paid from, usually within one working day. If you're unhappy with a deck you paid for, email <a href="mailto:{{ support_email }}" class="underline underline-offset-2">{{ support_email }}</a> within {{ retention_days }} days.</p>
+<p>You only pay for a deck you've seen. If you pay twice, or pay for a deck that has already been deleted, we refund the extra payment to the M-Pesa number you paid from, usually within one working day.{% if subscriptions %} Plan payments aren't refunded for unused credits, but if you were charged by mistake, email us and we'll refund the charge and remove the credits it added.{% endif %} If you're unhappy with a deck you paid for, email <a href="mailto:{{ support_email }}" class="underline underline-offset-2">{{ support_email }}</a> within {{ retention_days }} days.</p>
 
 <h2>Your content</h2>
 <p>You keep all rights to your decks. You confirm that you have the right to upload them. You give us permission to process them only to provide the service, as described in our <a href="{% url 'privacy' %}" class="underline underline-offset-2">privacy policy</a>. Unpaid decks are deleted after {{ unpaid_hours }} hours and paid decks {{ retention_days }} days after payment, so download your deck promptly.</p>

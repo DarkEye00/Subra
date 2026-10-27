@@ -1,0 +1,8 @@
+Hello,
+
+Your {{ plan }} plan renews on {{ date }}. Paystack will charge KES {{ price }} to your card{% if last4 %} ending {{ last4 }}{% endif %}.
+
+To cancel or change your card before then:
+{{ site_url }}/accounts/plan/
+
+SUBRA

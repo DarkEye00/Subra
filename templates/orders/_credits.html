@@ -1,0 +1,24 @@
+{% if credits.enough and order.can_pay %}
+<form method="post" action="{% url 'orders:pay_credits' order.public_id %}" class="panel mt-8 p-5 sm:p-6"
+      onsubmit="this.querySelector('[data-credits]').disabled = true">
+  {% csrf_token %}
+  <h2 class="text-2xl font-bold tracking-tight">Your redesigned deck is ready</h2>
+  <p class="mt-1 text-muted">{{ order.theme.name }} theme. Every word and number was checked against your original. Look through the slides below, then download the editable .pptx.</p>
+  {% if credits.subscription.status == 'past_due' %}
+    <p class="mt-4 rounded-lg bg-marigold-soft px-4 py-3 text-sm">Your company's card payment failed. Credits work until {{ credits.subscription.grace_ends_at|date:"j M" }}.</p>
+  {% endif %}
+  <button class="btn-primary mt-5 w-full" data-credits>Use {{ order.credit_cost }} credits to download</button>
+  <p class="mt-3 text-sm text-muted">You have {{ credits.balance }} credit{{ credits.balance|pluralize }}.</p>
+</form>
+{% else %}
+<div class="panel mt-8 p-5 sm:p-6">
+  <h2 class="text-2xl font-bold tracking-tight">Your redesigned deck is ready</h2>
+  <p class="mt-1 text-muted">{{ order.theme.name }} theme. Every word and number was checked against your original. Look through the slides below, then pay to download the editable .pptx.</p>
+  {% if credits.balance < order.credit_cost %}
+  <p class="mt-4 rounded-lg bg-marigold-soft px-4 py-3 text-sm">You have {{ credits.balance }} credit{{ credits.balance|pluralize }}; this deck needs {{ order.credit_cost }}.
+    {% if credits.is_owner %}<a href="{% url 'accounts:plan' %}#top-up" class="font-bold underline underline-offset-2">Buy a top-up</a>{% else %}Ask {{ credits.owner_email }} to top up.{% endif %}</p>
+  {% else %}
+  <p class="mt-4 rounded-lg bg-page px-4 py-3 text-sm">This deck was uploaded before you joined your company, so it can only be paid with M-Pesa.</p>
+  {% endif %}
+</div>
+{% endif %}

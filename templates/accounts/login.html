@@ -11,6 +11,7 @@
     <input type="hidden" name="next" value="{{ next }}">
     <button class="btn-primary mt-6 w-full">Sign in</button>
   </form>
+  <p class="mt-4 text-sm"><a href="{% url 'accounts:password_reset' %}" class="font-bold text-ink underline underline-offset-2">Forgot your password?</a></p>
   <p class="mt-6 text-sm text-muted">New to SUBRA? <a href="{% url 'signup' %}{% if next %}?next={{ next|urlencode }}{% endif %}" class="font-bold text-ink underline underline-offset-2">Create an account</a></p>
 </div>
 {% endblock %}

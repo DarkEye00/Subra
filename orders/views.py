@@ -10,6 +10,8 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from accounts.models import membership_for
+from billing import credits as ledger
 from billing import services as billing
 from billing.models import Payment, PriceTier, ProductType
 from billing.providers import PaymentEvent, get_provider
@@ -58,7 +60,35 @@ def upload(request):
 
 
 def _own_order(request, public_id):
+    """Decks that change (polish, theme, pay, discard) are the uploader's alone."""
     return get_object_or_404(Order, public_id=public_id, user=request.user)
+
+
+def _visible_order(request, public_id):
+    """The uploader, or the owner of the company the deck was uploaded under, may look at and download a deck."""
+    order = get_object_or_404(Order.objects.select_related("company", "user"), public_id=public_id)
+    if order.user_id == request.user.pk:
+        return order
+    if order.company_id and order.company.owner_id == request.user.pk:
+        return order
+    raise Http404
+
+
+def _credits_context(request, order):
+    """What the detail page needs to offer credits, or None for decks of companies without a live plan."""
+    if not settings.SUBSCRIPTIONS_ENABLED or not order.credit_cost or not order.company_id:
+        return None
+    subscription = ledger.live_subscription(order.company)
+    if subscription is None:
+        return None
+    have = ledger.balance(order.company)
+    return {
+        "balance": have,
+        "enough": have >= order.credit_cost and order.company_id == membership_for(order.user).company_id,
+        "subscription": subscription,
+        "is_owner": order.company.owner_id == request.user.pk,
+        "owner_email": order.company.owner.email,
+    }
 
 
 def _local_phone(mpesa_phone):
@@ -86,10 +116,12 @@ def order_list(request):
 
 @login_required
 def detail(request, public_id):
-    order = _own_order(request, public_id)
+    order = _visible_order(request, public_id)
     last_payment = order.payments.first()
     context = {
         "order": order,
+        "is_uploader": order.user_id == request.user.pk,
+        "credits": _credits_context(request, order),
         "themes": Theme.objects.filter(active=True),
         "phone": _local_phone(last_payment.phone if last_payment else request.user.mpesa_phone),
         "last_payment": last_payment,
@@ -153,9 +185,25 @@ def pay(request, public_id):
 
 
 @login_required
+@require_POST
+def pay_credits(request, public_id):
+    order = _own_order(request, public_id)
+    if not settings.SUBSCRIPTIONS_ENABLED:
+        raise Http404
+    if not allow(request, "pay", *settings.PAYMENT_RATE_LIMIT):
+        messages.error(request, "Too many payment attempts. Please wait a few minutes and try again.")
+        return redirect("orders:detail", public_id=public_id)
+    try:
+        ledger.pay_with_credits(order, request.user)
+    except ledger.CreditsError as e:
+        messages.error(request, str(e))
+    return redirect("orders:detail", public_id=public_id)
+
+
+@login_required
 def status(request, public_id):
     """HTMX poll target: reload the page when the processing status or the payment changes."""
-    order = _own_order(request, public_id)
+    order = _visible_order(request, public_id)
     last_payment = order.payments.first()
     key = _poll_key(order, last_payment)
     if key != request.GET.get("from"):
@@ -183,7 +231,7 @@ def discard(request, public_id):
 
 @login_required
 def download(request, public_id):
-    order = _own_order(request, public_id)
+    order = _visible_order(request, public_id)
     if order.status != S.READY or not order.result_file or not order.is_paid:
         raise Http404
     return redirect(signed_url(order.result_file.name, download_name(order)))

@@ -1,0 +1,10 @@
+Hello,
+
+We couldn't charge your card{% if last4 %} ending {{ last4 }}{% endif %} for your {{ plan }} plan.
+
+Your {{ balance }} credits still work until {{ until|date:"j M Y" }}. Update your card before then to keep them:
+{{ site_url }}/accounts/plan/
+
+If nothing changes by then, the credits expire and your team pays per deck with M-Pesa.
+
+SUBRA
