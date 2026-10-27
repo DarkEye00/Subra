@@ -39,12 +39,13 @@ class PaymentAdmin(admin.ModelAdmin):
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
     list_display = ("name", "code", "price_kes", "monthly_credits", "kes_per_credit", "paystack_plan_code",
-                    "paystack_amount_kes", "active", "sort_order")
-    list_editable = ("price_kes", "monthly_credits", "active", "sort_order")
-    readonly_fields = ("paystack_plan_code", "paystack_amount_kes")
+                    "paystack_mode", "paystack_amount_kes", "active", "staff_only", "sort_order")
+    list_editable = ("price_kes", "monthly_credits", "active", "staff_only", "sort_order")
+    readonly_fields = ("paystack_plan_code", "paystack_amount_kes", "paystack_mode")
 
     def changelist_view(self, request, extra_context=None):
-        stale = [p.name for p in Plan.objects.filter(active=True) if p.paystack_amount_kes != p.price_kes]
+        stale = [p.name for p in Plan.objects.filter(active=True) if p.paystack_amount_kes != p.price_kes
+                 or p.paystack_mode != subscriptions.paystack().mode]
         if stale:
             self.message_user(request, f"Not yet at Paystack: {', '.join(stale)}. Run manage.py sync_paystack_plans "
                               "(new subscribers are refused until then).", messages.WARNING)

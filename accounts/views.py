@@ -68,7 +68,7 @@ def plans(request):
     _subscriptions_on()
     tiers = list(PriceTier.objects.filter(active=True, product_type=ProductType.DECK_POLISH, credits__gt=0))
     rows = []
-    for plan in Plan.objects.filter(active=True):
+    for plan in Plan.offered_to(request.user):
         decks = [(t.name, plan.monthly_credits // t.credits) for t in tiers]
         rows.append({"plan": plan, "decks": decks, "consent": consent_text(plan)})
     context = {"rows": rows, "grace_days": settings.SUBSCRIPTION_GRACE_DAYS,
@@ -90,7 +90,7 @@ def subscribe(request):
     _subscriptions_on()
     if _limited(request):
         return redirect("accounts:plans")
-    plan = Plan.objects.filter(code=request.POST.get("plan"), active=True).first()
+    plan = Plan.offered_to(request.user).filter(code=request.POST.get("plan")).first()
     if plan is None:
         messages.error(request, "Choose a plan.")
         return redirect("accounts:plans")
@@ -128,7 +128,7 @@ def plan(request):
             usage_all=credits.usage_by_member(company), orders=orders,
             ledger=CreditTransaction.objects.filter(company=company).select_related("user")[:30],
             packs=CreditPack.objects.filter(active=True) if sub is not None else [],
-            other_plans=[(p, consent_text(p)) for p in Plan.objects.filter(active=True)
+            other_plans=[(p, consent_text(p)) for p in Plan.offered_to(request.user)
                          if sub is None or p.pk != sub.plan_id],
             past=Subscription.objects.filter(company=company, status__in=Subscription.TERMINAL).exclude(
                 status=Subscription.Status.ABANDONED).first(),

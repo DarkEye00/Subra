@@ -176,9 +176,12 @@ def prune_webhook_deliveries(now):
 
 
 def check_plans():
-    stale = [p.name for p in Plan.objects.filter(active=True) if p.paystack_amount_kes != p.price_kes]
+    mode = paystack().mode
+    stale = [p.name for p in Plan.objects.filter(active=True)
+             if p.paystack_amount_kes != p.price_kes or p.paystack_mode != mode]
     if stale and settings.SUBSCRIPTIONS_ENABLED:
         alert_admins("Plans not synced to Paystack",
-                     f"{', '.join(stale)}: the SUBRA price differs from Paystack's, so new subscribers are refused. "
+                     f"{', '.join(stale)}: not set up at Paystack with the current ({mode or 'no'}) key, or the price "
+                     "differs, so new subscribers are refused. "
                      "Run manage.py sync_paystack_plans.")
     return len(stale)

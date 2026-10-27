@@ -94,9 +94,9 @@ def start_subscription_checkout(user, plan, consent_text, provider=None, replace
     provider = provider or paystack()
     if not consent_text:
         raise BillingError("Tick the box to agree to the monthly charge.")
-    if not plan.active or not plan.paystack_plan_code:
+    if not plan.active or not plan.paystack_plan_code or (plan.staff_only and not user.is_staff):
         raise BillingError("This plan isn't available right now.")
-    if plan.paystack_amount_kes != plan.price_kes:
+    if plan.paystack_amount_kes != plan.price_kes or plan.paystack_mode != provider.mode:
         alert_admins(f"Plan {plan.code} is out of sync with Paystack",
                      f"{plan.name} costs KES {plan.price_kes} in SUBRA but KES {plan.paystack_amount_kes} at Paystack. "
                      "Run manage.py sync_paystack_plans.")
@@ -649,6 +649,8 @@ def sync_plans(provider=None, stdout=None):
     out = []
     for plan in Plan.objects.all():
         name = f"SUBRA {plan.name}"
+        if plan.paystack_plan_code and plan.paystack_mode != provider.mode:
+            plan.paystack_plan_code = ""  # made with the other key (test vs live): that plan doesn't exist here
         if not plan.paystack_plan_code:
             if not plan.active:
                 continue
@@ -661,8 +663,8 @@ def sync_plans(provider=None, stdout=None):
         else:
             out.append((plan, "unchanged"))
             continue
-        plan.paystack_amount_kes = plan.price_kes
-        plan.save(update_fields=["paystack_plan_code", "paystack_amount_kes"])
+        plan.paystack_amount_kes, plan.paystack_mode = plan.price_kes, provider.mode
+        plan.save(update_fields=["paystack_plan_code", "paystack_amount_kes", "paystack_mode"])
         out.append((plan, action))
     return out
 

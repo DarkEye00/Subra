@@ -435,6 +435,7 @@ def test_changing_plan_starts_the_new_one_today_and_keeps_the_credits(active, us
                                                                       django_capture_on_commit_callbacks):
     business = Plan.objects.get(code="business")
     business.paystack_plan_code, business.paystack_amount_kes = "PLN_business", business.price_kes
+    business.paystack_mode = "test"
     business.save()
     subscribe(user, business, fake, replace=True)
     new = Subscription.objects.get(status=SS.INCOMPLETE)
@@ -519,3 +520,61 @@ def test_charges_made_elsewhere_on_the_account_stay_quiet(active, client, settin
     webhook(client, "charge.success", data)
     assert len(mail.outbox) == sent
     assert WebhookDelivery.objects.get(reference="PAYLINK_1").outcome == "ignored: not a SUBRA charge"
+
+
+# --- going live: test and live keys, staff-only pilot plans, the preflight check ----------------------------
+
+def test_plans_made_with_the_test_key_are_recreated_with_the_live_key(db, fake):
+    subscriptions.sync_plans(provider=fake)
+    assert Plan.objects.get(code="team").paystack_mode == "test"
+    fake.secret_key = "sk_live_abc"
+    results = dict((p.code, a) for p, a in subscriptions.sync_plans(provider=fake))
+    assert results == {"solo": "created", "team": "created", "business": "created"}
+    assert Plan.objects.get(code="team").paystack_mode == "live"
+
+
+def test_checkout_refuses_a_plan_made_with_the_other_key(subs_on, user, team, fake):
+    fake.secret_key = "sk_live_abc"
+    with pytest.raises(subscriptions.BillingError, match="being updated"):
+        subscribe(user, team, fake)
+    assert "/transaction/initialize" not in fake.paths()
+
+
+def test_a_staff_only_plan_is_for_staff(subs_on, client, user, team, fake):
+    team.staff_only = True
+    team.save()
+    client.force_login(user)
+    assert "Team" not in client.get(reverse("accounts:plans")).content.decode()
+    with pytest.raises(subscriptions.BillingError, match="isn't available"):
+        subscribe(user, team, fake)
+    user.is_staff = True
+    user.save()
+    assert ">Team<" in client.get(reverse("accounts:plans")).content.decode()
+    assert subscribe(user, team, fake).startswith("https://checkout.paystack.com/")
+
+
+def test_the_preflight_check(subs_on, settings, team, monkeypatch, capsys):
+    from django.core.management import CommandError, call_command
+
+    fake = FakePaystack()
+    fake.secret_key = "sk_live_abc"
+    monkeypatch.setattr(subscriptions, "paystack", lambda: fake)
+    from billing.management.commands import billing_preflight
+
+    monkeypatch.setattr(billing_preflight, "paystack", lambda: fake)
+    with pytest.raises(CommandError):
+        call_command("billing_preflight")
+    out = capsys.readouterr().out
+    assert "isn't set up at Paystack for this key" in out and "SITE_URL" in out and "EMAIL_HOST" in out
+    settings.DEBUG, settings.SITE_URL = False, "https://subra.co.ke"
+    settings.EMAIL_HOST, settings.ADMIN_ALERT_EMAIL = "smtp.example.co.ke", "ops@example.co.ke"
+    Plan.objects.exclude(pk=team.pk).update(active=False)
+    team.paystack_mode = "live"
+    team.save()
+    original = fake._request
+    fake._request = lambda m, path, body=None: ({"status": True, "data": {"amount": 500000, "currency": "KES"}}
+                                                if path == "/plan/PLN_team" else original(m, path, body))
+    call_command("billing_preflight")
+    out = capsys.readouterr().out
+    assert "ok  Team: PLN_team, KES 5,000 a month" in out and "All checks passed." in out
+    assert "https://subra.co.ke/billing/webhooks/paystack/" in out

@@ -61,6 +61,13 @@ class PaystackProvider:
     def configured(self):
         return bool(self.secret_key)
 
+    @property
+    def mode(self):
+        """"live" or "test", from the key. Paystack's two modes have separate plans, customers and cards."""
+        if self.secret_key.startswith("sk_live_"):
+            return "live"
+        return "test" if self.secret_key.startswith("sk_test_") else ""
+
     def _request(self, method, path, body=None):
         try:
             resp = self.session.request(method, API + path, json=body, timeout=self.timeout,

@@ -130,7 +130,7 @@ def plan(db):
     from billing.models import Plan
 
     plan = Plan.objects.get(code="team")  # KES 5,000, 115 credits (seeded)
-    plan.paystack_plan_code = "PLN_team"
+    plan.paystack_plan_code, plan.paystack_mode = "PLN_team", "test"
     plan.save()
     return plan
 

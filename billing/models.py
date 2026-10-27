@@ -127,7 +127,10 @@ class Plan(models.Model):
     monthly_credits = models.PositiveIntegerField()
     paystack_plan_code = models.CharField(max_length=40, blank=True, help_text="PLN_..., set by sync_paystack_plans")
     paystack_amount_kes = models.PositiveIntegerField(default=0, help_text="The amount Paystack last confirmed")
+    paystack_mode = models.CharField(max_length=4, blank=True, help_text="test or live: the key the plan was made with")
     active = models.BooleanField(default=True)
+    staff_only = models.BooleanField(default=False, help_text="Only staff see and can buy it, e.g. a cheap plan for "
+                                                              "testing a real card")
     sort_order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -135,6 +138,11 @@ class Plan(models.Model):
 
     def __str__(self):
         return f"{self.name}: KES {self.price_kes:,} a month, {self.monthly_credits} credits"
+
+    @classmethod
+    def offered_to(cls, user):
+        plans = cls.objects.filter(active=True)
+        return plans if getattr(user, "is_staff", False) else plans.filter(staff_only=False)
 
     @property
     def kes_per_credit(self):

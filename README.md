@@ -53,7 +53,9 @@ Set `SUBSCRIPTIONS_ENABLED=1` to show plans, Plan & credits, and paying for deck
 .venv/bin/python manage.py billing_tick --now 2026-12-01T09:00:00+03:00   # pretend it's later
 ```
 
-Going live: `manage.py sync_paystack_plans` creates the plans at Paystack (run it again after a price change; new subscribers are refused while a price is out of sync). Paystack's webhook URL stays `https://<your domain>/billing/webhooks/paystack/`. The prerequisites are in the [subscriptions spec](docs/superpowers/specs/2026-10-27-subscriptions-and-credits-design.md), section 11.
+Going live: `manage.py sync_paystack_plans` creates the plans at Paystack (run it again after a price change; new subscribers are refused while a price is out of sync). Paystack's webhook URL stays `https://<your domain>/billing/webhooks/paystack/`. Test and live keys have separate Paystack plans: after switching `PAYSTACK_SECRET_KEY` from `sk_test_` to `sk_live_`, run `sync_paystack_plans` again (it recreates them). `manage.py billing_preflight` checks the key, `SITE_URL`, SMTP, alerts and every plan at Paystack, and prints the webhook URL; it exits non-zero while anything is missing. To try a real card cheaply, add a plan in the admin with **Staff only** ticked (say KES 100 for 2 credits), sync, subscribe from a staff account, then cancel and refund it from the Paystack dashboard.
+
+The prerequisites are in the [subscriptions spec](docs/superpowers/specs/2026-10-27-subscriptions-and-credits-design.md), section 11.
 
 ## Tests
 
